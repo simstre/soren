@@ -185,9 +185,33 @@ export function ChartContainer() {
       }
     } else {
       // Incremental: just update the newest candle(s) — much faster
+      // Verify the new data is actually newer than what's in the series
+      const seriesData = seriesRef.current.data();
+      const lastSeriesTime = seriesData.length > 0
+        ? (seriesData[seriesData.length - 1].time as unknown as number)
+        : 0;
       const newCandles = candles.slice(prevCount - 1); // include last bar for update
-      for (const c of newCandles) {
-        seriesRef.current.update(toBarData(c));
+      const firstNewTime = newCandles.length > 0
+        ? (Math.floor(new Date(newCandles[0].timestamp).getTime() / 1000) + utcOffset)
+        : 0;
+
+      if (firstNewTime >= lastSeriesTime && lastSeriesTime > 0) {
+        for (const c of newCandles) {
+          seriesRef.current.update(toBarData(c));
+        }
+      } else {
+        // Times went backwards (ticker switch mid-stream) — full reset
+        const seen = new Set<number>();
+        const data = candles
+          .map(toBarData)
+          .filter((d) => {
+            const t = d.time as unknown as number;
+            if (seen.has(t)) return false;
+            seen.add(t);
+            return true;
+          })
+          .sort((a, b) => (a.time as unknown as number) - (b.time as unknown as number));
+        seriesRef.current.setData(data);
       }
 
       // Auto-scroll to keep the latest bar visible during replay
