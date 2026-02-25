@@ -24,6 +24,18 @@ STRATEGIES: list[StrategyDef] = [
         entry_rule="RSI div + S/R ≥3 + ATR stops + fitness-filtered tickers",
     ),
     StrategyDef(
+        id="refined_rsi_v3",
+        name="RSI Divergence Smart v3",
+        description="Empirically optimized from 27-ticker analysis. Wider RSI bands (28-46/54-72), lower S/R threshold (>=3), tighter stops (1.5x ATR), wider targets (3.5x ATR), volume confirmation, morning session filter. Fewer filtered trades, better R:R.",
+        entry_rule="RSI div + S/R ≥3 + vol confirm + wider RSI bands + ATR 1.5/3.5",
+    ),
+    StrategyDef(
+        id="refined_rsi_v4",
+        name="RSI Divergence Smart v4",
+        description="Surgical improvements to v1 based on 104-trade empirical analysis. Skips 2pm hour (only losing hour). Slightly wider short RSI band (56-70 vs 58-70) since shorts outperform longs 62% vs 50% WR. Wider ATR target 3.5x for better R:R. All other v1 filters kept intact.",
+        entry_rule="RSI div + S/R ≥5 + skip 2pm + wider short band + ATR 2.0/3.5",
+    ),
+    StrategyDef(
         id="refined_rsi_v2",
         name="RSI Divergence Smart v2",
         description="Wider entry filters: RSI bands 28-48/52-72, S/R strength >= 3, min spread 5. More trades, tested against UNH/AAPL/GOOGL/MSFT/TSLA performance profile. ATR stops 1.8x, targets 3.5x.",

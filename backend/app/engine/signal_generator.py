@@ -1047,6 +1047,295 @@ def generate_signals_refined_rsi_v2(
     ]
 
 
+def generate_signals_refined_rsi_v3(
+    analysis: AnalysisResult,
+    df: pd.DataFrame,
+    stop_loss_pct: float | None = None,
+    best_divergence: "DivergenceSignal | None" = None,
+    current_timestamp: "datetime | None" = None,
+    tf_params: "TimeframeParams | None" = None,
+) -> list[TradingSignal]:
+    """Refined RSI v3 — empirically optimized from 27-ticker backtest analysis.
+
+    Key changes from v1 (data-driven):
+    - Lower S/R strength threshold: >= 3 (B/C grade setups were most profitable)
+    - Wider RSI bands: buy 28-46, sell 54-72
+    - Lower min RSI spread: 5 (was 7 on 1m)
+    - Tighter ATR stop: 1.5x (data showed tighter stops = marginally better P&L)
+    - Higher ATR target: 3.5x (improved R:R)
+    - Volume confirmation: volume must be > 50% of 20-bar avg
+    - Morning filter: skip first 15 min after open (9:30-9:45)
+    - No grade filtering — all qualifying setups are taken equally
+    """
+    if tf_params is None:
+        tf_params = get_timeframe_params("5m")
+
+    price = analysis.current_price
+    if price <= 0 or len(df) < 20:
+        return []
+
+    if best_divergence is None:
+        return []
+
+    # --- Filter 1: Relaxed divergence strength (5 for all timeframes) ---
+    if best_divergence.rsi_spread < 5.0:
+        return []
+
+    # --- Filter 2: Time filters (intraday only) ---
+    if tf_params.use_time_filters and current_timestamp is not None:
+        hour = current_timestamp.hour if hasattr(current_timestamp, "hour") else 12
+        minute = current_timestamp.minute if hasattr(current_timestamp, "minute") else 0
+        # Skip last 30 min
+        if hour == 15 and minute >= 30:
+            return []
+        # Skip first 15 min after open
+        if hour == 9 and minute < 45:
+            return []
+
+    # --- Filter 3: Volume confirmation ---
+    vol = df["volume"]
+    avg_vol = vol.rolling(20).mean().iloc[-1]
+    cur_vol = vol.iloc[-1]
+    if not pd.isna(avg_vol) and avg_vol > 0 and cur_vol < avg_vol * 0.5:
+        return []
+
+    rsi_val = analysis.rsi_current
+
+    # --- Filter 4: Wider RSI bands ---
+    allow_buy = 28.0 <= rsi_val < 46.0
+    allow_sell = 54.0 < rsi_val <= 72.0
+
+    # --- Filter 5: S/R proximity with relaxed strength >= 3 ---
+    sr_factors = _detect_sr_factors(analysis, price)
+    sr_factors = [f for f in sr_factors if f.sr_strength >= 3]
+    if not sr_factors:
+        return []
+
+    div_side = "BUY" if best_divergence.direction == "bullish" else "SELL"
+
+    agreeing = [f for f in sr_factors if f.side == div_side]
+    if not agreeing:
+        return []
+
+    if div_side == "BUY" and not allow_buy:
+        return []
+    if div_side == "SELL" and not allow_sell:
+        return []
+
+    best_sr = max(agreeing, key=lambda f: f.sr_strength)
+
+    confidence = min(0.95, best_sr.confidence + best_divergence.weight * 0.4)
+
+    # --- Setup quality grading (informational only, NOT used to filter) ---
+    _grade_score = 0
+    if best_divergence.rsi_spread >= 12:
+        _grade_score += 2
+    elif best_divergence.rsi_spread >= 8:
+        _grade_score += 1
+    if best_sr.sr_strength >= 8:
+        _grade_score += 2
+    elif best_sr.sr_strength >= 5:
+        _grade_score += 1
+    if confidence >= 0.7:
+        _grade_score += 1
+    _grade_map = {5: "A", 4: "B", 3: "C", 2: "D"}
+    _setup_grade = _grade_map.get(_grade_score, "E" if _grade_score < 2 else "A")
+
+    # --- ATR-based stop loss (tighter: 1.5x) ---
+    atr_series = calc_atr(df, period=14)
+    atr_val = atr_series.iloc[-1]
+
+    atr_stop_mult = 1.5
+    atr_target_mult = 3.5
+
+    if stop_loss_pct is not None and stop_loss_pct > 0:
+        atr_stop_dist = atr_val * atr_stop_mult if not pd.isna(atr_val) else price * stop_loss_pct
+        fixed_stop_dist = price * stop_loss_pct
+        stop_dist = min(atr_stop_dist, fixed_stop_dist)
+    elif not pd.isna(atr_val):
+        stop_dist = atr_val * atr_stop_mult
+    else:
+        stop_dist = price * 0.02
+
+    if div_side == "BUY":
+        stop = round(price - stop_dist, 2)
+    else:
+        stop = round(price + stop_dist, 2)
+
+    # --- ATR-based profit target (wider: 3.5x) ---
+    if not pd.isna(atr_val):
+        target_dist = atr_val * atr_target_mult
+    else:
+        target_dist = price * 0.01
+
+    if div_side == "BUY":
+        target = round(price + target_dist, 2)
+    else:
+        target = round(price - target_dist, 2)
+
+    reason = (
+        f"[{_setup_grade}] {best_sr.reason} + {best_divergence.description} ({best_divergence.timeframe}) "
+        f"[spread={best_divergence.rsi_spread:.0f}] [refined-v3-{tf_params.timeframe}]"
+    )
+
+    return [
+        TradingSignal(
+            symbol=analysis.symbol,
+            signal_type=div_side,
+            entry_price=price,
+            stop_loss=stop,
+            profit_target=target,
+            reason=reason,
+            pattern_type="refined_rsi_v3",
+            confidence=confidence,
+            created_at=datetime.now(timezone.utc),
+            has_rsi_divergence=True,
+            sr_strength=best_sr.sr_strength,
+            divergence_timeframe=best_divergence.timeframe,
+        )
+    ]
+
+
+def generate_signals_refined_rsi_v4(
+    analysis: AnalysisResult,
+    df: pd.DataFrame,
+    stop_loss_pct: float | None = None,
+    best_divergence: "DivergenceSignal | None" = None,
+    current_timestamp: "datetime | None" = None,
+    tf_params: "TimeframeParams | None" = None,
+) -> list[TradingSignal]:
+    """Refined RSI v4 — surgical improvements to v1 based on 104-trade empirical analysis.
+
+    Data-driven changes from v1:
+    - Skip hour 14 (2pm) entries: only losing hour (-$252 from 20T at 45% WR)
+    - Slightly wider sell RSI band: 56-70 (was 58-70). Shorts outperform longs
+      (61.9% vs 50.0% WR), so give shorts a few more entry opportunities.
+    - Wider ATR target: 3.5x (was 3.0x). With avg win $185 and avg loss $130,
+      pushing targets wider improves R:R on the winners that do run.
+    - Everything else identical to v1 (proven: S/R>=5, RSI buy 30-42, spread>=7,
+      ATR stop 2.0x, no morning skip, grading kept as info only).
+    """
+    if tf_params is None:
+        tf_params = get_timeframe_params("5m")
+
+    price = analysis.current_price
+    if price <= 0 or len(df) < 20:
+        return []
+
+    if best_divergence is None:
+        return []
+
+    # --- Filter 1: Minimum divergence strength (same as v1) ---
+    if best_divergence.rsi_spread < tf_params.min_rsi_spread:
+        return []
+
+    # --- Filter 2: Time filters ---
+    if tf_params.use_time_filters and current_timestamp is not None:
+        hour = current_timestamp.hour if hasattr(current_timestamp, "hour") else 12
+        minute = current_timestamp.minute if hasattr(current_timestamp, "minute") else 0
+        # Skip last 30 min (same as v1)
+        if hour == 15 and minute >= 30:
+            return []
+        # NEW: skip hour 14 (2pm-3pm) — empirically the only losing hour
+        if hour == 14:
+            return []
+
+    rsi_val = analysis.rsi_current
+
+    # --- Filter 3: RSI bands (slightly wider sell band for shorts) ---
+    allow_buy = tf_params.rsi_buy_lo <= rsi_val < tf_params.rsi_buy_hi  # 30-42
+    # NEW: sell band starts at 56 instead of 58 — shorts have 61.9% WR vs 50% for longs
+    sell_lo = tf_params.rsi_sell_lo - 2.0 if tf_params.timeframe == "1m" else tf_params.rsi_sell_lo
+    allow_sell = sell_lo < rsi_val <= tf_params.rsi_sell_hi  # 56-70 (was 58-70)
+
+    # --- Filter 4: S/R proximity with minimum strength >= 5 (same as v1) ---
+    sr_factors = _detect_sr_factors(analysis, price)
+    sr_factors = [f for f in sr_factors if f.sr_strength >= 5]
+    if not sr_factors:
+        return []
+
+    div_side = "BUY" if best_divergence.direction == "bullish" else "SELL"
+
+    agreeing = [f for f in sr_factors if f.side == div_side]
+    if not agreeing:
+        return []
+
+    if div_side == "BUY" and not allow_buy:
+        return []
+    if div_side == "SELL" and not allow_sell:
+        return []
+
+    best_sr = max(agreeing, key=lambda f: f.sr_strength)
+    confidence = min(0.95, best_sr.confidence + best_divergence.weight * 0.4)
+
+    # --- ATR-based stop loss (same as v1: 2.0x) ---
+    atr_series = calc_atr(df, period=14)
+    atr_val = atr_series.iloc[-1]
+
+    if stop_loss_pct is not None and stop_loss_pct > 0:
+        atr_stop_dist = atr_val * tf_params.atr_stop_mult if not pd.isna(atr_val) else price * stop_loss_pct
+        fixed_stop_dist = price * stop_loss_pct
+        stop_dist = min(atr_stop_dist, fixed_stop_dist)
+    elif not pd.isna(atr_val):
+        stop_dist = atr_val * tf_params.atr_stop_mult
+    else:
+        stop_dist = price * 0.02
+
+    if div_side == "BUY":
+        stop = round(price - stop_dist, 2)
+    else:
+        stop = round(price + stop_dist, 2)
+
+    # --- ATR-based profit target (NEW: 3.5x instead of 3.0x for better R:R) ---
+    atr_target_mult = 3.5
+    if not pd.isna(atr_val):
+        target_dist = atr_val * atr_target_mult
+    else:
+        target_dist = price * 0.01
+
+    if div_side == "BUY":
+        target = round(price + target_dist, 2)
+    else:
+        target = round(price - target_dist, 2)
+
+    # --- Setup quality grading (informational, same as v1) ---
+    _grade_score = 0
+    if best_divergence.rsi_spread >= 12:
+        _grade_score += 2
+    elif best_divergence.rsi_spread >= 8:
+        _grade_score += 1
+    if best_sr.sr_strength >= 8:
+        _grade_score += 2
+    elif best_sr.sr_strength >= 5:
+        _grade_score += 1
+    if confidence >= 0.7:
+        _grade_score += 1
+    _grade_map = {5: "A", 4: "B", 3: "C", 2: "D"}
+    _setup_grade = _grade_map.get(_grade_score, "E" if _grade_score < 2 else "A")
+
+    reason = (
+        f"[{_setup_grade}] {best_sr.reason} + {best_divergence.description} ({best_divergence.timeframe}) "
+        f"[spread={best_divergence.rsi_spread:.0f}] [refined-v4-{tf_params.timeframe}]"
+    )
+
+    return [
+        TradingSignal(
+            symbol=analysis.symbol,
+            signal_type=div_side,
+            entry_price=price,
+            stop_loss=stop,
+            profit_target=target,
+            reason=reason,
+            pattern_type="refined_rsi_v4",
+            confidence=confidence,
+            created_at=datetime.now(timezone.utc),
+            has_rsi_divergence=True,
+            sr_strength=best_sr.sr_strength,
+            divergence_timeframe=best_divergence.timeframe,
+        )
+    ]
+
+
 def check_exit_refined_rsi(
     analysis: AnalysisResult,
     df: pd.DataFrame,
