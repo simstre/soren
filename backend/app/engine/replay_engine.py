@@ -22,6 +22,7 @@ from app.engine.signal_generator import (
     generate_signals_vwap_bounce,
     generate_signals_exhaustion_reversal,
     generate_signals_refined_rsi,
+    generate_signals_refined_rsi_v2,
     check_exit_mean_reversion,
     check_exit_momentum,
     check_exit_vwap,
@@ -744,11 +745,11 @@ class ReplayEngine:
 
             # Divergence
             best_div = None
-            if self._strategy in ("rsi_divergence_sr", "refined_rsi"):
+            if self._strategy in ("rsi_divergence_sr", "refined_rsi", "refined_rsi_v2"):
                 best_div = self._scan_divergences(symbol, timestamp)
 
             # Suppress during cooldown
-            if self._cooldown_bars.get(symbol, 0) > 0 and self._strategy == "refined_rsi":
+            if self._cooldown_bars.get(symbol, 0) > 0 and self._strategy in ("refined_rsi", "refined_rsi_v2"):
                 best_div = None
 
             # Strategy dispatch
@@ -770,6 +771,14 @@ class ReplayEngine:
                 )
             elif self._strategy == "refined_rsi":
                 signals = generate_signals_refined_rsi(
+                    analysis, df,
+                    stop_loss_pct=self._stop_loss_pct,
+                    best_divergence=best_div,
+                    current_timestamp=timestamp,
+                    tf_params=self._tf_params,
+                )
+            elif self._strategy == "refined_rsi_v2":
+                signals = generate_signals_refined_rsi_v2(
                     analysis, df,
                     stop_loss_pct=self._stop_loss_pct,
                     best_divergence=best_div,
@@ -807,7 +816,7 @@ class ReplayEngine:
             reversal = check_exit_vwap(analysis, df, current_side)
         elif self._strategy == "exhaustion_reversal":
             reversal = check_exit_exhaustion(analysis, df, current_side)
-        elif self._strategy == "refined_rsi":
+        elif self._strategy in ("refined_rsi", "refined_rsi_v2"):
             entry_time = None
             for tr in reversed(self._trade_records):
                 if tr["status"] == "OPEN" and tr["symbol"] == symbol:

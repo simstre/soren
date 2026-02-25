@@ -24,6 +24,12 @@ STRATEGIES: list[StrategyDef] = [
         entry_rule="RSI div + S/R ≥3 + ATR stops + fitness-filtered tickers",
     ),
     StrategyDef(
+        id="refined_rsi_v2",
+        name="RSI Divergence Smart v2",
+        description="Wider entry filters: RSI bands 28-48/52-72, S/R strength >= 3, min spread 5. More trades, tested against UNH/AAPL/GOOGL/MSFT/TSLA performance profile. ATR stops 1.8x, targets 3.5x.",
+        entry_rule="RSI div + S/R ≥3 + wider RSI bands + ATR stops",
+    ),
+    StrategyDef(
         id="rsi_divergence_sr",
         name="RSI Divergence + S/R",
         description="Enter when RSI divergence is detected on a lower timeframe AND price is near support/resistance. Adaptive multi-timeframe learning.",

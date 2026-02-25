@@ -10,7 +10,7 @@ import { api } from "@/lib/api";
 import { ChartToolbar } from "./ChartToolbar";
 import { TickerSearch } from "./TickerSearch";
 import { applyOverlays, clearOverlays, type OverlayHandles } from "./ChartOverlays";
-import type { WSMessage, Trade } from "@/lib/types";
+import type { WSMessage, Trade, CandleData } from "@/lib/types";
 
 /** Get the local timezone abbreviation (e.g. "EST", "PST", "CET"). */
 function getTimezoneAbbr(): string {
@@ -46,6 +46,8 @@ export function ChartContainer() {
   const replayMode = useAppStore((s) => s.replayMode);
   const selectedTradeId = useAppStore((s) => s.selectedTradeId);
   const [companyName, setCompanyName] = useState("");
+  const prevCandleCountRef = useRef(0);
+  const autoScrollRef = useRef(true);
 
   // Fetch company name when ticker changes
   useEffect(() => {
@@ -69,6 +71,13 @@ export function ChartContainer() {
     const barsInfo = seriesRef.current.barsInLogicalRange(logicalRange);
     if (barsInfo !== null && barsInfo.barsBefore < 50) {
       loadMoreRef.current?.();
+    }
+
+    // Disable auto-scroll if user panned away from the right edge
+    if (barsInfo !== null && barsInfo.barsAfter > 5) {
+      autoScrollRef.current = false;
+    } else if (barsInfo !== null && barsInfo.barsAfter <= 2) {
+      autoScrollRef.current = true;
     }
   }, []);
 
@@ -137,50 +146,69 @@ export function ChartContainer() {
     };
   }, [onVisibleLogicalRangeChanged]);
 
-  // Update data when candles change
+  // Update data when candles change — use incremental update() when possible
   useEffect(() => {
     if (!seriesRef.current || candles.length === 0) return;
 
-    // Save current logical range to restore scroll position after prepending
-    const currentRange = chartRef.current?.timeScale().getVisibleLogicalRange();
-
-    // Deduplicate by timestamp and ensure ascending time order.
-    // Shift to local time: lightweight-charts treats timestamps as UTC,
-    // so we add the local offset so the axis shows local time.
     const utcOffset = getLocalUtcOffsetSeconds();
-    const seen = new Set<number>();
-    const data = candles
-      .map((c) => ({
-        time: (Math.floor(new Date(c.timestamp).getTime() / 1000) + utcOffset) as unknown as import("lightweight-charts").Time,
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close,
-      }))
-      .filter((d) => {
-        const t = d.time as unknown as number;
-        if (seen.has(t)) return false;
-        seen.add(t);
-        return true;
-      })
-      .sort((a, b) => (a.time as unknown as number) - (b.time as unknown as number));
+    const toBarData = (c: CandleData) => ({
+      time: (Math.floor(new Date(c.timestamp).getTime() / 1000) + utcOffset) as unknown as import("lightweight-charts").Time,
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+    });
 
-    seriesRef.current.setData(data);
+    const prevCount = prevCandleCountRef.current;
+    const isAppend = candles.length > prevCount && prevCount > 0;
+    const isInitial = isInitialLoadRef.current || prevCount === 0;
 
-    if (isInitialLoadRef.current) {
-      // Only fit content on initial load
-      chartRef.current?.timeScale().fitContent();
-      isInitialLoadRef.current = false;
-    } else if (currentRange) {
-      // Preserve scroll position when prepending historical data
-      // The logical range indices shift by the number of new candles prepended
-      // setData re-indexes, so we need to let the chart keep its current view
+    if (isInitial || !isAppend) {
+      // Full reset: initial load, ticker switch, or data prepend
+      const seen = new Set<number>();
+      const data = candles
+        .map(toBarData)
+        .filter((d) => {
+          const t = d.time as unknown as number;
+          if (seen.has(t)) return false;
+          seen.add(t);
+          return true;
+        })
+        .sort((a, b) => (a.time as unknown as number) - (b.time as unknown as number));
+
+      seriesRef.current.setData(data);
+
+      if (isInitialLoadRef.current) {
+        chartRef.current?.timeScale().fitContent();
+        isInitialLoadRef.current = false;
+        autoScrollRef.current = true;
+      }
+    } else {
+      // Incremental: just update the newest candle(s) — much faster
+      const newCandles = candles.slice(prevCount - 1); // include last bar for update
+      for (const c of newCandles) {
+        seriesRef.current.update(toBarData(c));
+      }
+
+      // Auto-scroll to keep the latest bar visible during replay
+      if (autoScrollRef.current && chartRef.current) {
+        chartRef.current.timeScale().scrollToRealTime();
+      }
     }
+
+    prevCandleCountRef.current = candles.length;
   }, [candles]);
 
   // Reset initial load flag when ticker/timeframe changes
   useEffect(() => {
     isInitialLoadRef.current = true;
+    prevCandleCountRef.current = 0;
+    autoScrollRef.current = true;
+    // Clear trade markers for the new ticker
+    tradeMarkersRef.current = [];
+    if (tradeMarkerHandleRef.current) {
+      tradeMarkerHandleRef.current.setMarkers([]);
+    }
   }, [selectedTicker, timeframe]);
 
   // Update watermark when ticker or company name changes

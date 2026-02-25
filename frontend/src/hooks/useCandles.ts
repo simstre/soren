@@ -78,15 +78,22 @@ export function useCandles(symbol: string, timeframe = "5m") {
     (msg: WSMessage) => {
       if (msg.type === "candle_update" && msg.payload.symbol === symbol) {
         const candle = msg.payload as unknown as CandleData;
-        setCandles((prev) => [...prev.slice(-999), candle]);
+        setCandles((prev) => {
+          if (prev.length > 2000) {
+            return [...prev.slice(-1500), candle];
+          }
+          return [...prev, candle];
+        });
       }
       // Replay mode: append candles one-by-one, dedup by timestamp
       if (msg.type === "replay_candle" && msg.payload.symbol === symbol) {
         const candle = msg.payload as unknown as CandleData;
         setCandles((prev) => {
-          // Skip if we already have this timestamp
+          // Update in-place if same timestamp (partial bar update)
           if (prev.length > 0 && prev[prev.length - 1].timestamp === candle.timestamp) {
-            return prev;
+            const updated = [...prev];
+            updated[updated.length - 1] = candle;
+            return updated;
           }
           return [...prev, candle];
         });

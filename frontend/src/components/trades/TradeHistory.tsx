@@ -6,6 +6,20 @@ import { formatCurrency, formatPercent, formatDateTime } from "@/lib/formatters"
 import type { Trade } from "@/lib/types";
 import clsx from "clsx";
 
+/** Extract setup grade (A-E) from reason string like "[A] Support..." */
+function parseGrade(reason: string): string | null {
+  const match = reason.match(/^\[([A-E])\]/);
+  return match ? match[1] : null;
+}
+
+const GRADE_COLORS: Record<string, string> = {
+  A: "bg-emerald-500/15 text-emerald-400",
+  B: "bg-blue-500/15 text-blue-400",
+  C: "bg-yellow-500/15 text-yellow-400",
+  D: "bg-orange-500/15 text-orange-400",
+  E: "bg-red-500/15 text-red-400",
+};
+
 function TradeTable({ trades, loading }: { trades: Trade[]; loading: boolean }) {
   const selectedTradeId = useAppStore((s) => s.selectedTradeId);
   const setSelectedTradeId = useAppStore((s) => s.setSelectedTradeId);
@@ -15,10 +29,11 @@ function TradeTable({ trades, loading }: { trades: Trade[]; loading: boolean }) 
   return (
     <div className="flex-1 overflow-y-auto">
       <table className="w-full text-sm table-fixed">
-        {/* Time | Symbol | Side | Qty | Entry | Exit | Stop | Target | P&L | Reason | Status */}
+        {/* Time | Symbol | Grade | Side | Qty | Entry | Exit | Stop | Target | P&L | Reason | Status */}
         <colgroup>
           <col className="w-[140px]" />
           <col className="w-[70px]" />
+          <col className="w-[42px]" />
           <col className="w-[52px]" />
           <col className="w-[48px]" />
           <col className="w-[80px]" />
@@ -33,6 +48,7 @@ function TradeTable({ trades, loading }: { trades: Trade[]; loading: boolean }) 
           <tr className="text-xs text-zinc-500 border-b border-zinc-800">
             <th className="text-left px-3 py-2 font-medium">Time</th>
             <th className="text-left px-2 py-2 font-medium">Symbol</th>
+            <th className="text-center px-1 py-2 font-medium">Grade</th>
             <th className="text-left px-2 py-2 font-medium">Side</th>
             <th className="text-right px-2 py-2 font-medium">Qty</th>
             <th className="text-right px-2 py-2 font-medium">Entry</th>
@@ -47,19 +63,20 @@ function TradeTable({ trades, loading }: { trades: Trade[]; loading: boolean }) 
         <tbody className="divide-y divide-zinc-800/50">
           {loading ? (
             <tr>
-              <td colSpan={11} className="px-3 py-4 text-zinc-500 text-center">
+              <td colSpan={12} className="px-3 py-4 text-zinc-500 text-center">
                 Loading trades...
               </td>
             </tr>
           ) : trades.length === 0 ? (
             <tr>
-              <td colSpan={11} className="px-3 py-4 text-zinc-600 text-center">
+              <td colSpan={12} className="px-3 py-4 text-zinc-600 text-center">
                 No trades yet
               </td>
             </tr>
           ) : (
             trades.map((trade) => {
               const pnlPositive = (trade.pnl ?? 0) >= 0;
+              const grade = parseGrade(trade.reason);
               return (
                 <tr
                   key={trade.id}
@@ -81,6 +98,20 @@ function TradeTable({ trades, loading }: { trades: Trade[]; loading: boolean }) 
                   </td>
                   <td className="px-2 py-1.5 font-mono font-medium text-white truncate">
                     {trade.symbol}
+                  </td>
+                  <td className="px-1 py-1.5 text-center">
+                    {grade ? (
+                      <span
+                        className={clsx(
+                          "text-[10px] font-bold px-1.5 py-0.5 rounded",
+                          GRADE_COLORS[grade] ?? "bg-zinc-500/10 text-zinc-400"
+                        )}
+                      >
+                        {grade}
+                      </span>
+                    ) : (
+                      <span className="text-zinc-600 text-[10px]">--</span>
+                    )}
                   </td>
                   <td className="px-2 py-1.5">
                     <span
