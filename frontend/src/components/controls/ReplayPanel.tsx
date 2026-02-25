@@ -20,15 +20,6 @@ import clsx from "clsx";
 
 const SPEED_OPTIONS = [1, 2, 5, 10, 50];
 
-const TIMEFRAME_OPTIONS = [
-  { value: "1m", label: "1m" },
-  { value: "5m", label: "5m" },
-  { value: "15m", label: "15m" },
-  { value: "1h", label: "1h" },
-  { value: "1D", label: "1D" },
-];
-
-
 
 const PERIOD_PRESETS = [
   { label: "1W", days: 7 },
@@ -101,20 +92,20 @@ export function ReplayPanel() {
   const positionSizePct = useAppStore((s) => s.positionSizePct);
   const stopLossPct = useAppStore((s) => s.stopLossPct);
 
-  const [timeframe, setTimeframe] = useState("5m");
-  const [startDate, setStartDate] = useState(() => getDefaultDateRange("5m").start);
-  const [endDate, setEndDate] = useState(() => getDefaultDateRange("5m").end);
+  const tradeCadence = useAppStore((s) => s.tradeCadence);
+  const [startDate, setStartDate] = useState(() => getDefaultDateRange(tradeCadence).start);
+  const [endDate, setEndDate] = useState(() => getDefaultDateRange(tradeCadence).end);
   const [speed, setSpeedLocal] = useState(10);
   const [expanded, setExpanded] = useState(true);
-  const [activePeriod, setActivePeriod] = useState<string | null>(() => getDefaultPeriodLabel("5m"));
+  const [activePeriod, setActivePeriod] = useState<string | null>(() => getDefaultPeriodLabel(tradeCadence));
 
-  // Update date range when trade cadence changes
+  // Update date range when trade cadence changes (from sidebar)
   useEffect(() => {
-    const range = getDefaultDateRange(timeframe);
+    const range = getDefaultDateRange(tradeCadence);
     setStartDate(range.start);
     setEndDate(range.end);
-    setActivePeriod(getDefaultPeriodLabel(timeframe));
-  }, [timeframe]);
+    setActivePeriod(getDefaultPeriodLabel(tradeCadence));
+  }, [tradeCadence]);
 
 
 
@@ -140,7 +131,7 @@ export function ReplayPanel() {
     const symbols = tradingTickers.length > 0 ? tradingTickers : [selectedTicker];
     await start({
       symbols,
-      timeframe,
+      timeframe: tradeCadence,
       start_date: startDate,
       end_date: endDate,
       speed,
@@ -180,29 +171,6 @@ export function ReplayPanel() {
           {/* Config (hide when running or showing results) */}
           {!isRunning && !results && (
             <>
-              {/* Trade Cadence (Timeframe) */}
-              <div>
-                <label className="block text-xs text-zinc-500 mb-1">
-                  Trade Cadence
-                </label>
-                <div className="flex gap-1">
-                  {TIMEFRAME_OPTIONS.map((tf) => (
-                    <button
-                      key={tf.value}
-                      onClick={() => setTimeframe(tf.value)}
-                      className={clsx(
-                        "flex-1 py-1 text-xs rounded transition-colors",
-                        timeframe === tf.value
-                          ? "bg-blue-500/20 text-blue-400 border border-blue-500/30"
-                          : "bg-zinc-900 text-zinc-400 border border-zinc-700 hover:border-zinc-600"
-                      )}
-                    >
-                      {tf.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
               {/* Period presets */}
               <div>
                 <label className="block text-xs text-zinc-500 mb-1">
