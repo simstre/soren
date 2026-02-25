@@ -1,17 +1,16 @@
 """Strategy-fitness scanner — two-phase scoring for the refined RSI strategy.
 
-Phase 1: Fast daily pre-filter (price, volume, ATR hard cuts) → ~30 candidates
-Phase 2: Score on metrics empirically correlated with backtest P&L:
-         - Volume (r=+0.40 with P&L, +0.35 with win rate)
-         - Price inverted (r=-0.34 with P&L, lower price → better)
-         - 1m S/R strong count (r=+0.36 with win rate, only 1m metric that helps)
-         - ATR sweet spot on daily (good range = more trades, less gating)
+Phase 1: Fast daily pre-filter (price, volume, ATR hard cuts) → ~40 candidates
+Phase 2: Score on actual 1m strategy-relevant metrics:
+         - Signal density: count RSI divergences + S/R co-occurrences on 7d 1m data.
+           This directly measures how many entry opportunities the strategy gets.
+           Tickers with more signals = more trades = more profit opportunity.
+         - Volume floor: minimum volume for reliable 1m candles.
 
-Scoring weights derived from correlation analysis on 40-ticker backtest:
-  Volume:     40 pts  (strongest pre-backtest predictor of win rate)
-  Price:      25 pts  (inverted — cheaper stocks win more on 1m)
-  1m S/R:     25 pts  (only 1m metric correlated with WR)
-  ATR range:  10 pts  (mild preference for mid-range volatility)
+Validated against 10-ticker backtests:
+  INTC scored #1 by proxy metrics but LOST -$1,216.
+  AMD scored #12 by proxy metrics but WON +$1,622.
+  Signal density correctly predicts: AMD 27 trades, INTC 4 trades (gated).
 """
 
 from __future__ import annotations
@@ -23,8 +22,9 @@ import pandas as pd
 import yfinance as yf
 import structlog
 
-from app.analysis.indicators import atr as calc_atr
+from app.analysis.indicators import atr as calc_atr, rsi as calc_rsi
 from app.analysis.support_resistance import detect_sr_levels
+from app.engine.signal_generator import detect_rsi_divergence
 
 logger = structlog.get_logger()
 
@@ -33,7 +33,7 @@ logger = structlog.get_logger()
 class FitnessScore:
     symbol: str
     total_score: float  # 0-100
-    # Metrics (kept for display and debugging)
+    # Metrics
     price: float
     avg_volume: int
     atr_pct: float
@@ -59,85 +59,68 @@ def _empty_score(symbol: str, disqualify_reason: str, price: float = 0,
 
 
 # ---------------------------------------------------------------------------
-# Scoring functions (weights: volume 40, price 25, sr 25, atr 10 = 100)
+# Scoring functions
+#
+# Signal density (75 pts): How many valid strategy setups exist on 1m data.
+#   This directly measures whether the strategy can trade the ticker.
+#   Uses strict matching: divergence + matching S/R + RSI in correct band.
+# Volume (10 pts): Minimum liquidity for reliable 1m candles.
+#   Once a ticker has 10M+ volume, more volume doesn't improve performance.
+# ATR range (15 pts): Moderate-to-high volatility = bigger moves per trade.
 # ---------------------------------------------------------------------------
 
-def _score_volume(avg_volume: float) -> float:
-    """0-40 pts. Linear from 5M → 80M+.
+def _score_signal_density(setup_count: int) -> float:
+    """0-75 pts. Based on valid setup count (div + S/R + RSI band + direction match).
 
-    Volume is the strongest pre-backtest predictor of both win rate and P&L.
-    High-volume tickers have tighter spreads and more reliable 1m candles.
+    Tickers with more valid setups give the strategy more entry opportunities.
+    20+ valid setups in 7 days of 1m data → max score.
+    """
+    if setup_count <= 0:
+        return 0.0
+    if setup_count >= 20:
+        return 75.0
+    return setup_count / 20 * 75
+
+
+def _score_volume(avg_volume: float) -> float:
+    """0-10 pts. Once above 10M, volume barely matters for this strategy.
+
+    Just need enough for reliable 1m candles and reasonable spreads.
     """
     if avg_volume < 5_000_000:
         return 0.0
-    if avg_volume >= 80_000_000:
-        return 40.0
-    return (avg_volume - 5_000_000) / (80_000_000 - 5_000_000) * 40
-
-
-def _score_price_inverted(price: float) -> float:
-    """0-25 pts. Lower price → higher score.
-
-    Empirically, cheaper stocks ($20-150) perform better on 1m refined_rsi
-    than expensive ones ($400+). Likely due to more retail flow and larger
-    percentage moves per ATR unit.
-
-    $20-50: 25 pts, $50-150: 25→15 pts, $150-400: 15→5, $400+: 5→0
-    """
-    if price < 20:
-        return 0.0  # too cheap, likely low quality
-    if price <= 50:
-        return 25.0
-    if price <= 150:
-        return 25.0 - (price - 50) / (150 - 50) * 10  # 25 → 15
-    if price <= 400:
-        return 15.0 - (price - 150) / (400 - 150) * 10  # 15 → 5
-    if price <= 700:
-        return 5.0 - (price - 400) / (700 - 400) * 5  # 5 → 0
-    return 0.0
-
-
-def _score_sr_1m(strong_count: int) -> float:
-    """0-25 pts. Linear from 0 → 25+ strong S/R levels on 1m data.
-
-    Only 1m metric that correlates with win rate (r=+0.36).
-    More strong S/R levels = more valid entry zones for the strategy.
-    """
-    if strong_count <= 0:
-        return 0.0
-    if strong_count >= 25:
-        return 25.0
-    return strong_count / 25 * 25
+    if avg_volume >= 50_000_000:
+        return 10.0
+    return (avg_volume - 5_000_000) / (50_000_000 - 5_000_000) * 10
 
 
 def _score_atr_range(atr_pct: float) -> float:
-    """0-10 pts. Peak at 1.5-3.5% daily ATR range.
+    """0-15 pts. Peak at 1.5-5.0% daily ATR range.
 
-    Mid-range volatility produces more trades without excessive gating.
-    Too low = no signals. Too high = erratic stops.
+    Higher volatility means bigger moves per trade. AMD at 4.9% was top performer.
     """
     if atr_pct < 0.5:
-        return atr_pct / 0.5 * 5  # ramp to 5 at 0.5%
+        return atr_pct / 0.5 * 5
     if atr_pct < 1.5:
-        return 5.0 + (atr_pct - 0.5) / 1.0 * 5  # 5 → 10
-    if atr_pct <= 3.5:
-        return 10.0  # sweet spot
+        return 5.0 + (atr_pct - 0.5) / 1.0 * 10  # 5 → 15
     if atr_pct <= 5.0:
-        return 10.0 - (atr_pct - 3.5) / 1.5 * 10  # 10 → 0
+        return 15.0
+    if atr_pct <= 7.0:
+        return 15.0 - (atr_pct - 5.0) / 2.0 * 15  # 15 → 0
     return 0.0
 
 
 # ---------------------------------------------------------------------------
-# Phase 1: Daily pre-filter (hard cuts only, no scoring)
+# Phase 1: Daily pre-filter (hard cuts only)
 # ---------------------------------------------------------------------------
 
 async def _phase1_daily_filter(
     universe: list[str],
-    top_n: int = 30,
+    top_n: int = 40,
 ) -> list[tuple[str, float, int, float]]:
     """Fetch daily data, apply hard disqualifiers, return passing tickers.
 
-    Hard disqualifiers: price < $10, volume < 500K, ATR% > 5%.
+    Hard disqualifiers: price < $10, volume < 500K, ATR% > 7%.
     Returns list of (symbol, price, avg_volume, atr_pct).
     """
     candidates: list[tuple[str, float, int, float]] = []
@@ -145,7 +128,12 @@ async def _phase1_daily_filter(
     for symbol in universe:
         try:
             ticker = yf.Ticker(symbol)
-            df = ticker.history(period="70d", interval="1d")
+
+            df = pd.DataFrame()
+            for _attempt in range(3):
+                df = ticker.history(period="70d", interval="1d")
+                if not df.empty:
+                    break
 
             if df.empty or len(df) < 20:
                 logger.debug("phase1_skip", symbol=symbol, reason="insufficient data")
@@ -160,15 +148,11 @@ async def _phase1_daily_filter(
             current_atr = float(atr_series.iloc[-1]) if not atr_series.empty and not np.isnan(atr_series.iloc[-1]) else 0
             atr_pct = (current_atr / price * 100) if price > 0 else 0
 
-            # Hard disqualifiers
             if price < 10:
-                logger.debug("phase1_dq", symbol=symbol, reason=f"price ${price:.2f} < $10")
                 continue
             if avg_volume < 500_000:
-                logger.debug("phase1_dq", symbol=symbol, reason=f"volume {avg_volume:,} < 500K")
                 continue
-            if atr_pct > 5:
-                logger.debug("phase1_dq", symbol=symbol, reason=f"ATR% {atr_pct:.1f}% > 5%")
+            if atr_pct > 7:
                 continue
 
             candidates.append((symbol, price, avg_volume, atr_pct))
@@ -182,8 +166,98 @@ async def _phase1_daily_filter(
 
 
 # ---------------------------------------------------------------------------
-# Phase 2: Score on empirically-validated metrics
+# Phase 2: Score on actual 1m strategy signals
 # ---------------------------------------------------------------------------
+
+def _count_signals_on_1m(df: pd.DataFrame) -> tuple[int, int, int, int, int]:
+    """Slide through 1m data counting valid strategy setups and checking signal quality.
+
+    Returns (div_count, setup_count, winning_setups, sr_strong_count, total_windows).
+    A 'setup' = divergence + matching S/R + RSI in valid band.
+    A 'winning_setup' = setup where price moved in the predicted direction within 30 bars.
+    """
+    if len(df) < 40:
+        return 0, 0, 0, 0, 0
+
+    closes = df["close"].values.tolist()
+    rsi_series = calc_rsi(df["close"], period=14)
+    rsi_values = rsi_series.values.tolist()
+
+    # Detect S/R levels on the full 1m dataset
+    sr_levels = detect_sr_levels(df)
+    sr_strong = [lvl for lvl in sr_levels if lvl.strength >= 5]
+    sr_strong_count = len(sr_strong)
+
+    # Separate support and resistance for direction matching
+    supports = [lvl for lvl in sr_strong if lvl.level_type == "support"]
+    resistances = [lvl for lvl in sr_strong if lvl.level_type == "resistance"]
+
+    div_count = 0
+    setup_count = 0
+    winning_setups = 0
+    window_size = 20
+    step = 5
+    total_windows = 0
+    lookahead = 30  # bars to check after signal
+
+    for i in range(window_size, len(closes), step):
+        total_windows += 1
+
+        window_rsi = [v for v in rsi_values[i - window_size:i] if not np.isnan(v)]
+        window_prices = closes[i - window_size:i]
+
+        if len(window_rsi) < window_size or len(window_prices) < window_size:
+            continue
+
+        div = detect_rsi_divergence(window_rsi, window_prices, lookback=window_size)
+        if div is None:
+            continue
+        if div.rsi_spread < 7:
+            continue
+
+        current_rsi = window_rsi[-1]
+        current_price = closes[i - 1]
+
+        # Must pass RSI band filter (match strategy's bands for 1m)
+        if div.direction == "bullish":
+            if not (30 <= current_rsi < 42):
+                continue
+        else:  # bearish
+            if not (58 < current_rsi <= 70):
+                continue
+
+        div_count += 1
+
+        # Check direction-matched S/R proximity (within 0.5%)
+        levels_to_check = supports if div.direction == "bullish" else resistances
+        is_setup = False
+        for lvl in levels_to_check:
+            dist_pct = abs(current_price - lvl.price) / current_price * 100
+            if dist_pct <= 0.5:
+                is_setup = True
+                break
+
+        if not is_setup:
+            continue
+
+        setup_count += 1
+
+        # Signal quality check: did price move in predicted direction within 30 bars?
+        if i + lookahead <= len(closes):
+            future_prices = closes[i:i + lookahead]
+            if div.direction == "bullish":
+                # Check if price went up by at least 0.1%
+                max_future = max(future_prices)
+                if max_future > current_price * 1.001:
+                    winning_setups += 1
+            else:
+                # Check if price went down by at least 0.1%
+                min_future = min(future_prices)
+                if min_future < current_price * 0.999:
+                    winning_setups += 1
+
+    return div_count, setup_count, winning_setups, sr_strong_count, total_windows
+
 
 async def _score_ticker(
     symbol: str,
@@ -191,27 +265,42 @@ async def _score_ticker(
     avg_volume: int,
     atr_pct: float,
 ) -> FitnessScore:
-    """Fetch 7 days of 1m data for S/R count, then score."""
+    """Fetch 7 days of 1m data, count strategy signals, then score."""
     try:
         ticker = yf.Ticker(symbol)
-        df = ticker.history(period="7d", interval="1m")
+
+        df = pd.DataFrame()
+        for _attempt in range(3):
+            df = ticker.history(period="7d", interval="1m")
+            if not df.empty:
+                break
 
         if df.empty or len(df) < 100:
             return _empty_score(symbol, "insufficient 1m data", price, avg_volume, atr_pct)
 
         df.columns = [c.lower() for c in df.columns]
 
-        # S/R quality on 1m (only 1m metric that correlates with win rate)
-        sr_levels = detect_sr_levels(df)
-        sr_strong = sum(1 for lvl in sr_levels if lvl.strength >= 5)
+        # Count actual strategy signals on 1m data
+        div_count, setup_count, winning_setups, sr_strong_count, total_windows = _count_signals_on_1m(df)
 
         # Score components
+        signal_s = _score_signal_density(setup_count)
         vol_s = _score_volume(avg_volume)
-        price_s = _score_price_inverted(price)
-        sr_s = _score_sr_1m(sr_strong)
         atr_s = _score_atr_range(atr_pct)
 
-        total = vol_s + price_s + sr_s + atr_s
+        total = signal_s + vol_s + atr_s
+
+        win_rate = winning_setups / setup_count * 100 if setup_count > 0 else 0
+        logger.info(
+            "phase2_signals",
+            symbol=symbol,
+            div_count=div_count,
+            setup_count=setup_count,
+            winning=winning_setups,
+            win_rate=f"{win_rate:.0f}%",
+            sr_strong=sr_strong_count,
+            signal_score=round(signal_s, 1),
+        )
 
         return FitnessScore(
             symbol=symbol,
@@ -219,10 +308,10 @@ async def _score_ticker(
             price=round(price, 2),
             avg_volume=avg_volume,
             atr_pct=round(atr_pct, 2),
-            sr_strong_count=sr_strong,
+            sr_strong_count=sr_strong_count,
             volume_score=round(vol_s, 1),
-            price_score=round(price_s, 1),
-            sr_score=round(sr_s, 1),
+            price_score=round(signal_s, 1),  # repurposed: signal density score
+            sr_score=0,  # no longer scored separately
             atr_score=round(atr_s, 1),
             disqualified=False,
             disqualify_reason="",
@@ -250,7 +339,7 @@ async def run_fitness_scan(
     universe: list[str] | None = None,
     top_n: int = 15,
 ) -> list[FitnessScore]:
-    """Two-phase fitness scan: daily filter → empirical scoring."""
+    """Two-phase fitness scan: daily filter → 1m signal scoring."""
     if universe is None:
         from app.scanner.runner import SCAN_UNIVERSE
         symbols = SCAN_UNIVERSE
@@ -263,24 +352,11 @@ async def run_fitness_scan(
     candidates = await _phase1_daily_filter(symbols, top_n=40)
     logger.info("phase1_candidates", count=len(candidates))
 
-    # Phase 2: score each candidate
+    # Phase 2: score each candidate on 1m signal density
     scores: list[FitnessScore] = []
     for sym, price, avg_volume, atr_pct in candidates:
         score = await _score_ticker(sym, price, avg_volume, atr_pct)
         scores.append(score)
-        if not score.disqualified:
-            logger.info(
-                "fitness_scored",
-                symbol=sym,
-                total=score.total_score,
-                vol_s=score.volume_score,
-                price_s=score.price_score,
-                sr_s=score.sr_score,
-                atr_s=score.atr_score,
-                sr_strong=score.sr_strong_count,
-            )
-        else:
-            logger.debug("fitness_disqualified", symbol=sym, reason=score.disqualify_reason)
 
     # Filter out disqualified, sort by total score descending
     qualified = [s for s in scores if not s.disqualified]
