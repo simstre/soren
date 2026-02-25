@@ -51,10 +51,10 @@ export function Sidebar() {
   const setTradeHistoryTab = useAppStore((s) => s.setTradeHistoryTab);
   const setPerformanceTab = useAppStore((s) => s.setPerformanceTab);
   const loadRefinedRsiPreset = useAppStore((s) => s.loadRefinedRsiPreset);
+  const scanning = useAppStore((s) => s.scanning);
   const { status, loading, start, stop } = useEngine();
   const running = status?.running ?? false;
   const [tickerInput, setTickerInput] = useState("");
-  const [scanning, setScanning] = useState(false);
 
   useEffect(() => {
     // Hydrate position size from backend then load preset
@@ -71,15 +71,15 @@ export function Sidebar() {
   }, []);
 
   const handleScanFitness = async () => {
-    setScanning(true);
+    useAppStore.setState({ scanning: true });
     try {
-      const results = await api.scanFitness(10);
+      const results = await api.scanFitness(3);
       const tickers = results.map((r) => r.symbol);
       setTradingTickers(tickers);
     } catch {
       // keep existing tickers on error
     }
-    setScanning(false);
+    useAppStore.setState({ scanning: false });
   };
 
   const handleStartTrading = () => {
@@ -98,8 +98,9 @@ export function Sidebar() {
           disabled={scanning}
           className={clsx(
             "w-full flex items-center justify-center gap-2 py-2 rounded-lg font-medium text-sm transition-all",
-            "bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 border border-cyan-500/20",
-            scanning && "opacity-60 cursor-not-allowed"
+            scanning
+              ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 animate-pulse cursor-wait"
+              : "bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 border border-cyan-500/20"
           )}
         >
           {scanning ? (
@@ -143,7 +144,12 @@ export function Sidebar() {
             className="flex-1 px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-500"
           />
         </div>
-        {tradingTickers.length > 0 ? (
+        {scanning && tradingTickers.length === 0 ? (
+          <div className="flex items-center gap-2 py-2 justify-center">
+            <Loader2 size={12} className="animate-spin text-cyan-400" />
+            <span className="text-xs text-cyan-400">Finding best tickers...</span>
+          </div>
+        ) : tradingTickers.length > 0 ? (
           <div className="flex flex-wrap gap-1">
             {tradingTickers.map((t) => (
               <span

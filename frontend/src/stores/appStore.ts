@@ -16,6 +16,7 @@ interface AppState {
   stopLossPct: number;
   tradingTickers: string[];
   tradeCadence: string;
+  scanning: boolean;
   setSelectedTicker: (ticker: string) => void;
   setTimeframe: (tf: string) => void;
   setEngineRunning: (running: boolean) => void;
@@ -48,6 +49,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   stopLossPct: 0.02,
   tradingTickers: [],
   tradeCadence: "1m",
+  scanning: false,
   setSelectedTicker: (ticker) => set({ selectedTicker: ticker }),
   setTimeframe: (tf) => set({ timeframe: tf }),
   setEngineRunning: (running) => set({ engineRunning: running }),
@@ -89,9 +91,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
     api.updateTradingSettings({ max_position_pct: 0.50 }).catch(() => {});
     // Scan for best tickers
+    set({ scanning: true });
     api.scanFitness(3).then((results) => {
       const tickers = results.map((r) => r.symbol);
       set({ tradingTickers: tickers });
-    }).catch(() => {});
+    }).catch(() => {}).finally(() => {
+      set({ scanning: false });
+    });
   },
 }));
