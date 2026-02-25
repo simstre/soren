@@ -89,7 +89,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
     api.updateTradingSettings({ max_position_pct: 0.50 }).catch(() => {});
     // Scan for best tickers
-    api.scanFitness(10).then((results) => {
+    api.scanFitness(3).then((results) => {
       const tickers = results.map((r) => r.symbol);
       set({ tradingTickers: tickers });
     }).catch(() => {});
