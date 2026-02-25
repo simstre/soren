@@ -1204,16 +1204,11 @@ def generate_signals_refined_rsi_v4(
     current_timestamp: "datetime | None" = None,
     tf_params: "TimeframeParams | None" = None,
 ) -> list[TradingSignal]:
-    """Refined RSI v4 — surgical improvements to v1 based on 104-trade empirical analysis.
+    """Refined RSI v4 — direction-agnostic improvement to v1.
 
-    Data-driven changes from v1:
-    - Skip hour 14 (2pm) entries: only losing hour (-$252 from 20T at 45% WR)
-    - Slightly wider sell RSI band: 56-70 (was 58-70). Shorts outperform longs
-      (61.9% vs 50.0% WR), so give shorts a few more entry opportunities.
-    - Wider ATR target: 3.5x (was 3.0x). With avg win $185 and avg loss $130,
-      pushing targets wider improves R:R on the winners that do run.
-    - Everything else identical to v1 (proven: S/R>=5, RSI buy 30-42, spread>=7,
-      ATR stop 2.0x, no morning skip, grading kept as info only).
+    Single change from v1: wider ATR target 3.5x (was 3.0x) for better R:R
+    on both longs and shorts. All other filters identical to v1.
+    Symmetric RSI bands, no time-of-day bias, no directional skew.
     """
     if tf_params is None:
         tf_params = get_timeframe_params("5m")
@@ -1229,24 +1224,18 @@ def generate_signals_refined_rsi_v4(
     if best_divergence.rsi_spread < tf_params.min_rsi_spread:
         return []
 
-    # --- Filter 2: Time filters ---
+    # --- Filter 2: Time filters (same as v1) ---
     if tf_params.use_time_filters and current_timestamp is not None:
         hour = current_timestamp.hour if hasattr(current_timestamp, "hour") else 12
         minute = current_timestamp.minute if hasattr(current_timestamp, "minute") else 0
-        # Skip last 30 min (same as v1)
         if hour == 15 and minute >= 30:
-            return []
-        # NEW: skip hour 14 (2pm-3pm) — empirically the only losing hour
-        if hour == 14:
             return []
 
     rsi_val = analysis.rsi_current
 
-    # --- Filter 3: RSI bands (slightly wider sell band for shorts) ---
-    allow_buy = tf_params.rsi_buy_lo <= rsi_val < tf_params.rsi_buy_hi  # 30-42
-    # NEW: sell band starts at 56 instead of 58 — shorts have 61.9% WR vs 50% for longs
-    sell_lo = tf_params.rsi_sell_lo - 2.0 if tf_params.timeframe == "1m" else tf_params.rsi_sell_lo
-    allow_sell = sell_lo < rsi_val <= tf_params.rsi_sell_hi  # 56-70 (was 58-70)
+    # --- Filter 3: Symmetric RSI bands (same as v1) ---
+    allow_buy = tf_params.rsi_buy_lo <= rsi_val < tf_params.rsi_buy_hi
+    allow_sell = tf_params.rsi_sell_lo < rsi_val <= tf_params.rsi_sell_hi
 
     # --- Filter 4: S/R proximity with minimum strength >= 5 (same as v1) ---
     sr_factors = _detect_sr_factors(analysis, price)

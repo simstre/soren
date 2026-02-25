@@ -32,8 +32,8 @@ STRATEGIES: list[StrategyDef] = [
     StrategyDef(
         id="refined_rsi_v4",
         name="RSI Divergence Smart v4",
-        description="Surgical improvements to v1 based on 104-trade empirical analysis. Skips 2pm hour (only losing hour). Slightly wider short RSI band (56-70 vs 58-70) since shorts outperform longs 62% vs 50% WR. Wider ATR target 3.5x for better R:R. All other v1 filters kept intact.",
-        entry_rule="RSI div + S/R ≥5 + skip 2pm + wider short band + ATR 2.0/3.5",
+        description="Direction-agnostic improvement to v1. Wider ATR target 3.5x (was 3.0x) for better risk:reward on both longs and shorts. Symmetric RSI bands, no time-of-day bias. All other v1 filters kept intact.",
+        entry_rule="RSI div + S/R ≥5 + ATR 2.0/3.5",
     ),
     StrategyDef(
         id="refined_rsi_v2",
