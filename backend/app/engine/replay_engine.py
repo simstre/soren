@@ -25,6 +25,7 @@ from app.engine.signal_generator import (
     generate_signals_refined_rsi_v2,
     generate_signals_refined_rsi_v3,
     generate_signals_refined_rsi_v4,
+    generate_signals_refined_rsi_v5,
     check_exit_mean_reversion,
     check_exit_momentum,
     check_exit_vwap,
@@ -242,7 +243,7 @@ class ReplayEngine:
         self._div_dataframes = {}
         self._trackers = {}
 
-        if self._strategy in ("rsi_divergence_sr", "refined_rsi", "refined_rsi_v2", "refined_rsi_v3", "refined_rsi_v4"):
+        if self._strategy in ("rsi_divergence_sr", "refined_rsi", "refined_rsi_v2", "refined_rsi_v3", "refined_rsi_v4", "refined_rsi_v5"):
             candidates = CANDIDATE_TIMEFRAMES.get(timeframe, [timeframe])
             active_tfs = list(CANDIDATE_TIMEFRAMES.get(timeframe, [timeframe]))
             for sym in symbol_dataframes:
@@ -747,11 +748,11 @@ class ReplayEngine:
 
             # Divergence
             best_div = None
-            if self._strategy in ("rsi_divergence_sr", "refined_rsi", "refined_rsi_v2", "refined_rsi_v3", "refined_rsi_v4"):
+            if self._strategy in ("rsi_divergence_sr", "refined_rsi", "refined_rsi_v2", "refined_rsi_v3", "refined_rsi_v4", "refined_rsi_v5"):
                 best_div = self._scan_divergences(symbol, timestamp)
 
             # Suppress during cooldown
-            if self._cooldown_bars.get(symbol, 0) > 0 and self._strategy in ("refined_rsi", "refined_rsi_v2", "refined_rsi_v3", "refined_rsi_v4"):
+            if self._cooldown_bars.get(symbol, 0) > 0 and self._strategy in ("refined_rsi", "refined_rsi_v2", "refined_rsi_v3", "refined_rsi_v4", "refined_rsi_v5"):
                 best_div = None
 
             # Strategy dispatch
@@ -803,6 +804,14 @@ class ReplayEngine:
                     current_timestamp=timestamp,
                     tf_params=self._tf_params,
                 )
+            elif self._strategy == "refined_rsi_v5":
+                signals = generate_signals_refined_rsi_v5(
+                    analysis, df,
+                    stop_loss_pct=self._stop_loss_pct,
+                    best_divergence=best_div,
+                    current_timestamp=timestamp,
+                    tf_params=self._tf_params,
+                )
             else:  # rsi_divergence_sr (default)
                 signals = generate_signals(
                     analysis,
@@ -834,7 +843,7 @@ class ReplayEngine:
             reversal = check_exit_vwap(analysis, df, current_side)
         elif self._strategy == "exhaustion_reversal":
             reversal = check_exit_exhaustion(analysis, df, current_side)
-        elif self._strategy in ("refined_rsi", "refined_rsi_v2", "refined_rsi_v3", "refined_rsi_v4"):
+        elif self._strategy in ("refined_rsi", "refined_rsi_v2", "refined_rsi_v3", "refined_rsi_v4", "refined_rsi_v5"):
             entry_time = None
             for tr in reversed(self._trade_records):
                 if tr["status"] == "OPEN" and tr["symbol"] == symbol:

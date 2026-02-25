@@ -1204,11 +1204,13 @@ def generate_signals_refined_rsi_v4(
     current_timestamp: "datetime | None" = None,
     tf_params: "TimeframeParams | None" = None,
 ) -> list[TradingSignal]:
-    """Refined RSI v4 — direction-agnostic improvement to v1.
+    """Refined RSI v4 — bear-market-tuned variant of v1.
 
-    Single change from v1: wider ATR target 3.5x (was 3.0x) for better R:R
-    on both longs and shorts. All other filters identical to v1.
-    Symmetric RSI bands, no time-of-day bias, no directional skew.
+    Changes from v1 based on 104-trade empirical analysis (bear market):
+    - Skip hour 14 (2pm) entries: only losing hour (-$252 from 20T at 45% WR)
+    - Wider sell RSI band: 56-70 (was 58-70) — shorts outperformed longs
+    - Wider ATR target: 3.5x (was 3.0x) for better R:R
+    NOTE: Contains directional bias — use v5 for direction-agnostic trading.
     """
     if tf_params is None:
         tf_params = get_timeframe_params("5m")
@@ -1224,18 +1226,22 @@ def generate_signals_refined_rsi_v4(
     if best_divergence.rsi_spread < tf_params.min_rsi_spread:
         return []
 
-    # --- Filter 2: Time filters (same as v1) ---
+    # --- Filter 2: Time filters ---
     if tf_params.use_time_filters and current_timestamp is not None:
         hour = current_timestamp.hour if hasattr(current_timestamp, "hour") else 12
         minute = current_timestamp.minute if hasattr(current_timestamp, "minute") else 0
         if hour == 15 and minute >= 30:
             return []
+        # Skip hour 14 (2pm-3pm) — bear-market losing hour
+        if hour == 14:
+            return []
 
     rsi_val = analysis.rsi_current
 
-    # --- Filter 3: Symmetric RSI bands (same as v1) ---
-    allow_buy = tf_params.rsi_buy_lo <= rsi_val < tf_params.rsi_buy_hi
-    allow_sell = tf_params.rsi_sell_lo < rsi_val <= tf_params.rsi_sell_hi
+    # --- Filter 3: RSI bands (wider sell band for shorts — bear market bias) ---
+    allow_buy = tf_params.rsi_buy_lo <= rsi_val < tf_params.rsi_buy_hi  # 30-42
+    sell_lo = tf_params.rsi_sell_lo - 2.0 if tf_params.timeframe == "1m" else tf_params.rsi_sell_lo
+    allow_sell = sell_lo < rsi_val <= tf_params.rsi_sell_hi  # 56-70
 
     # --- Filter 4: S/R proximity with minimum strength >= 5 (same as v1) ---
     sr_factors = _detect_sr_factors(analysis, price)
@@ -1275,7 +1281,7 @@ def generate_signals_refined_rsi_v4(
     else:
         stop = round(price + stop_dist, 2)
 
-    # --- ATR-based profit target (NEW: 3.5x instead of 3.0x for better R:R) ---
+    # --- ATR-based profit target: 3.5x (wider than v1's 3.0x) ---
     atr_target_mult = 3.5
     if not pd.isna(atr_val):
         target_dist = atr_val * atr_target_mult
@@ -1316,6 +1322,128 @@ def generate_signals_refined_rsi_v4(
             profit_target=target,
             reason=reason,
             pattern_type="refined_rsi_v4",
+            confidence=confidence,
+            created_at=datetime.now(timezone.utc),
+            has_rsi_divergence=True,
+            sr_strength=best_sr.sr_strength,
+            divergence_timeframe=best_divergence.timeframe,
+        )
+    ]
+
+
+def generate_signals_refined_rsi_v5(
+    analysis: AnalysisResult,
+    df: pd.DataFrame,
+    stop_loss_pct: float | None = None,
+    best_divergence: "DivergenceSignal | None" = None,
+    current_timestamp: "datetime | None" = None,
+    tf_params: "TimeframeParams | None" = None,
+) -> list[TradingSignal]:
+    """Refined RSI v5 — direction-agnostic improvement to v1.
+
+    Single change from v1: wider ATR target 3.5x (was 3.0x) for better R:R
+    on both longs and shorts equally. All other filters identical to v1.
+    Symmetric RSI bands, no time-of-day bias, no directional skew.
+    """
+    if tf_params is None:
+        tf_params = get_timeframe_params("5m")
+
+    price = analysis.current_price
+    if price <= 0 or len(df) < 20:
+        return []
+
+    if best_divergence is None:
+        return []
+
+    if best_divergence.rsi_spread < tf_params.min_rsi_spread:
+        return []
+
+    if tf_params.use_time_filters and current_timestamp is not None:
+        hour = current_timestamp.hour if hasattr(current_timestamp, "hour") else 12
+        minute = current_timestamp.minute if hasattr(current_timestamp, "minute") else 0
+        if hour == 15 and minute >= 30:
+            return []
+
+    rsi_val = analysis.rsi_current
+
+    allow_buy = tf_params.rsi_buy_lo <= rsi_val < tf_params.rsi_buy_hi
+    allow_sell = tf_params.rsi_sell_lo < rsi_val <= tf_params.rsi_sell_hi
+
+    sr_factors = _detect_sr_factors(analysis, price)
+    sr_factors = [f for f in sr_factors if f.sr_strength >= 5]
+    if not sr_factors:
+        return []
+
+    div_side = "BUY" if best_divergence.direction == "bullish" else "SELL"
+
+    agreeing = [f for f in sr_factors if f.side == div_side]
+    if not agreeing:
+        return []
+
+    if div_side == "BUY" and not allow_buy:
+        return []
+    if div_side == "SELL" and not allow_sell:
+        return []
+
+    best_sr = max(agreeing, key=lambda f: f.sr_strength)
+    confidence = min(0.95, best_sr.confidence + best_divergence.weight * 0.4)
+
+    atr_series = calc_atr(df, period=14)
+    atr_val = atr_series.iloc[-1]
+
+    if stop_loss_pct is not None and stop_loss_pct > 0:
+        atr_stop_dist = atr_val * tf_params.atr_stop_mult if not pd.isna(atr_val) else price * stop_loss_pct
+        fixed_stop_dist = price * stop_loss_pct
+        stop_dist = min(atr_stop_dist, fixed_stop_dist)
+    elif not pd.isna(atr_val):
+        stop_dist = atr_val * tf_params.atr_stop_mult
+    else:
+        stop_dist = price * 0.02
+
+    if div_side == "BUY":
+        stop = round(price - stop_dist, 2)
+    else:
+        stop = round(price + stop_dist, 2)
+
+    atr_target_mult = 3.5
+    if not pd.isna(atr_val):
+        target_dist = atr_val * atr_target_mult
+    else:
+        target_dist = price * 0.01
+
+    if div_side == "BUY":
+        target = round(price + target_dist, 2)
+    else:
+        target = round(price - target_dist, 2)
+
+    _grade_score = 0
+    if best_divergence.rsi_spread >= 12:
+        _grade_score += 2
+    elif best_divergence.rsi_spread >= 8:
+        _grade_score += 1
+    if best_sr.sr_strength >= 8:
+        _grade_score += 2
+    elif best_sr.sr_strength >= 5:
+        _grade_score += 1
+    if confidence >= 0.7:
+        _grade_score += 1
+    _grade_map = {5: "A", 4: "B", 3: "C", 2: "D"}
+    _setup_grade = _grade_map.get(_grade_score, "E" if _grade_score < 2 else "A")
+
+    reason = (
+        f"[{_setup_grade}] {best_sr.reason} + {best_divergence.description} ({best_divergence.timeframe}) "
+        f"[spread={best_divergence.rsi_spread:.0f}] [refined-v5-{tf_params.timeframe}]"
+    )
+
+    return [
+        TradingSignal(
+            symbol=analysis.symbol,
+            signal_type=div_side,
+            entry_price=price,
+            stop_loss=stop,
+            profit_target=target,
+            reason=reason,
+            pattern_type="refined_rsi_v5",
             confidence=confidence,
             created_at=datetime.now(timezone.utc),
             has_rsi_divergence=True,
