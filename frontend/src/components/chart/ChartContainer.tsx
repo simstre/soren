@@ -195,12 +195,18 @@ export function ChartContainer() {
         ? (Math.floor(new Date(newCandles[0].timestamp).getTime() / 1000) + utcOffset)
         : 0;
 
-      if (firstNewTime >= lastSeriesTime && lastSeriesTime > 0) {
-        for (const c of newCandles) {
-          seriesRef.current.update(toBarData(c));
+      let updateOk = firstNewTime >= lastSeriesTime && lastSeriesTime > 0;
+      if (updateOk) {
+        try {
+          for (const c of newCandles) {
+            seriesRef.current.update(toBarData(c));
+          }
+        } catch {
+          updateOk = false;
         }
-      } else {
-        // Times went backwards (ticker switch mid-stream) — full reset
+      }
+      if (!updateOk) {
+        // Fall back to full setData on any issue
         const seen = new Set<number>();
         const data = candles
           .map(toBarData)
