@@ -5,18 +5,14 @@ import { useAppStore } from "@/stores/appStore";
 
 export function Header() {
   const engineRunning = useAppStore((s) => s.engineRunning);
-  const loadRefinedRsiPreset = useAppStore((s) => s.loadRefinedRsiPreset);
 
   return (
     <header className="h-14 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between px-4">
       <div className="flex items-center gap-3">
-        <button
-          onClick={loadRefinedRsiPreset}
-          className="flex items-center gap-2 hover:opacity-80 transition-opacity"
-        >
+        <div className="flex items-center gap-2">
           <Activity className="text-emerald-400" size={22} />
           <span className="text-lg font-bold text-white tracking-tight">SOREN</span>
-        </button>
+        </div>
       </div>
       <div className="flex items-center gap-2">
         <div

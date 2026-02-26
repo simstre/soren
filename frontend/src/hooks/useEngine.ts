@@ -35,10 +35,10 @@ export function useEngine() {
 
   useWebSocket(handleWS);
 
-  const start = useCallback(async (timeframe?: string, strategy?: string, tickers?: string[]) => {
+  const start = useCallback(async (strategy: string, tickers?: string[]) => {
     setLoading(true);
     try {
-      await api.startEngine(timeframe, strategy, tickers);
+      await api.startEngine(strategy, tickers);
       await fetchStatus();
     } finally {
       setLoading(false);

@@ -98,26 +98,6 @@ export function useCandles(symbol: string, timeframe = "5m") {
           return [...prev, candle];
         });
       }
-      // Replay mode: append candles one-by-one, dedup by timestamp
-      if (msg.type === "replay_candle" && msg.payload.symbol === symbol) {
-        const candle = msg.payload as unknown as CandleData;
-        setCandles((prev) => {
-          // Update in-place if same timestamp (partial bar update)
-          if (prev.length > 0 && prev[prev.length - 1].timestamp === candle.timestamp) {
-            const updated = [...prev];
-            updated[updated.length - 1] = candle;
-            return updated;
-          }
-          return [...prev, candle];
-        });
-      }
-      // Clear candles when a new replay starts
-      if (msg.type === "replay_state") {
-        const state = msg.payload as { running: boolean; bar_index: number };
-        if (state.running && state.bar_index <= 1) {
-          setCandles([]);
-        }
-      }
     },
     [symbol]
   );

@@ -41,8 +41,10 @@ export function ChartContainer() {
   const { candles, loading, loadingMore, loadMore } = useCandles(selectedTicker, timeframe);
   const analysis = useAnalysis(selectedTicker, timeframe);
   const overlayHandlesRef = useRef<OverlayHandles | null>(null);
+  type MarkerWithId = SeriesMarker<Time> & { id?: string; _origColor?: string };
   const tradeMarkersRef = useRef<SeriesMarker<Time>[]>([]);
   const tradeMarkerHandleRef = useRef<{ setMarkers: (m: SeriesMarker<Time>[]) => void } | null>(null);
+  const allReplayMarkersRef = useRef<Map<string, MarkerWithId[]>>(new Map());
   const replayMode = useAppStore((s) => s.replayMode);
   const selectedTradeId = useAppStore((s) => s.selectedTradeId);
   const [companyName, setCompanyName] = useState("");
@@ -259,14 +261,14 @@ export function ChartContainer() {
   }, [analysis, candles]);
 
   // Replay trade arrows — listen for replay_trade and replay_state via WebSocket
+  // Accumulate markers by symbol so all trades are available when switching tickers
   const handleReplayTradeWS = useCallback(
     (msg: WSMessage) => {
-      if (!seriesRef.current) return;
-
-      // Clear markers when a new replay starts
+      // Clear all markers when a new replay starts
       if (msg.type === "replay_state") {
         const state = msg.payload as { running: boolean; bar_index: number };
         if (state.running && state.bar_index <= 1) {
+          allReplayMarkersRef.current = new Map();
           tradeMarkersRef.current = [];
           if (tradeMarkerHandleRef.current) {
             tradeMarkerHandleRef.current.setMarkers([]);
@@ -278,77 +280,83 @@ export function ChartContainer() {
       if (msg.type !== "replay_trade") return;
 
       const trade = msg.payload as unknown as Trade;
-      const store = useAppStore.getState();
-
-      // Auto-switch chart to the traded ticker during replay
-      if (store.replayMode && trade.symbol !== store.selectedTicker) {
-        // Clear markers from previous ticker's chart
-        tradeMarkersRef.current = [];
-        if (tradeMarkerHandleRef.current) {
-          tradeMarkerHandleRef.current.setMarkers([]);
-        }
-        store.setSelectedTicker(trade.symbol);
-        // New candles will load via useCandles; this trade's marker is added below
-      }
-
-      if (trade.symbol !== useAppStore.getState().selectedTicker) return;
-
-      // Remove existing markers for this trade ID (dedup on update)
+      const fmt = (n: number) => n.toFixed(2);
       const entryId = `entry-${trade.id}`;
       const exitId = `exit-${trade.id}`;
-      tradeMarkersRef.current = tradeMarkersRef.current.filter(
-        (m) => (m as SeriesMarker<Time> & { id?: string }).id !== entryId &&
-               (m as SeriesMarker<Time> & { id?: string }).id !== exitId
-      );
 
-      const fmt = (n: number) => n.toFixed(2);
+      // Get or create the marker list for this symbol
+      const symMarkers = allReplayMarkersRef.current.get(trade.symbol) ?? [];
+
+      // Remove existing markers for this trade ID (dedup on update)
+      const filtered = symMarkers.filter(
+        (m) => m.id !== entryId && m.id !== exitId
+      );
 
       // Add entry marker
       if (trade.entry_time) {
         const isBuy = trade.side === "BUY";
         const entryTime = (Math.floor(new Date(trade.entry_time).getTime() / 1000) + getLocalUtcOffsetSeconds()) as unknown as Time;
-
-        tradeMarkersRef.current.push({
+        filtered.push({
           time: entryTime,
           position: isBuy ? "belowBar" : "aboveBar",
           color: isBuy ? "#10b981" : "#ef4444",
           shape: isBuy ? "arrowUp" : "arrowDown",
           text: isBuy ? `BUY $${fmt(trade.entry_price)}` : `SELL $${fmt(trade.entry_price)}`,
           id: entryId,
-        } as SeriesMarker<Time> & { id: string });
+        } as MarkerWithId);
       }
 
       // Add exit marker if trade is closed
       if (trade.status === "CLOSED" && trade.exit_time && trade.exit_price) {
         const exitTime = (Math.floor(new Date(trade.exit_time).getTime() / 1000) + getLocalUtcOffsetSeconds()) as unknown as Time;
         const pnlPositive = (trade.pnl ?? 0) >= 0;
-
-        tradeMarkersRef.current.push({
+        filtered.push({
           time: exitTime,
           position: trade.side === "BUY" ? "aboveBar" : "belowBar",
           color: pnlPositive ? "#10b981" : "#ef4444",
           shape: "circle",
           text: `EXIT $${fmt(trade.exit_price)}`,
           id: exitId,
-        } as SeriesMarker<Time> & { id: string });
+        } as MarkerWithId);
       }
 
-      // Sort markers by time (required by lightweight-charts)
-      const sorted = [...tradeMarkersRef.current].sort(
-        (a, b) => (a.time as number) - (b.time as number)
-      );
+      allReplayMarkersRef.current.set(trade.symbol, filtered);
 
-      // Create or update markers
-      if (tradeMarkerHandleRef.current) {
-        tradeMarkerHandleRef.current.setMarkers(sorted);
-      } else {
-        tradeMarkerHandleRef.current = createSeriesMarkers(seriesRef.current, sorted);
+      // Only render markers for the currently selected ticker
+      const currentTicker = useAppStore.getState().selectedTicker;
+      if (trade.symbol === currentTicker && seriesRef.current) {
+        tradeMarkersRef.current = filtered;
+        const sorted = [...filtered].sort(
+          (a, b) => (a.time as number) - (b.time as number)
+        );
+        if (tradeMarkerHandleRef.current) {
+          tradeMarkerHandleRef.current.setMarkers(sorted);
+        } else {
+          tradeMarkerHandleRef.current = createSeriesMarkers(seriesRef.current, sorted);
+        }
       }
     },
     []
   );
 
   useWebSocket(handleReplayTradeWS);
+
+  // When selectedTicker changes, render that ticker's accumulated replay markers
+  useEffect(() => {
+    if (!seriesRef.current) return;
+    const markers = allReplayMarkersRef.current.get(selectedTicker);
+    if (markers && markers.length > 0) {
+      tradeMarkersRef.current = markers;
+      const sorted = [...markers].sort(
+        (a, b) => (a.time as number) - (b.time as number)
+      );
+      if (tradeMarkerHandleRef.current) {
+        tradeMarkerHandleRef.current.setMarkers(sorted);
+      } else {
+        tradeMarkerHandleRef.current = createSeriesMarkers(seriesRef.current, sorted);
+      }
+    }
+  }, [selectedTicker, candles]);
 
   // Highlight selected trade markers and scroll chart to its entry time
   const HIGHLIGHT_COLOR = "#facc15"; // yellow
@@ -358,7 +366,6 @@ export function ChartContainer() {
   useEffect(() => {
     if (!seriesRef.current) return;
 
-    type MarkerWithId = SeriesMarker<Time> & { id?: string; _origColor?: string };
     const markers = tradeMarkersRef.current as MarkerWithId[];
 
     // Restore previous selection's colors

@@ -10,15 +10,18 @@ export function EngineToggle() {
   const setTradeHistoryTab = useAppStore((s) => s.setTradeHistoryTab);
   const setPerformanceTab = useAppStore((s) => s.setPerformanceTab);
   const selectedStrategy = useAppStore((s) => s.selectedStrategy);
-  const tradingTickers = useAppStore((s) => s.tradingTickers);
-  const selectedTicker = useAppStore((s) => s.selectedTicker);
-  const tradeCadence = useAppStore((s) => s.tradeCadence);
   const running = status?.running ?? false;
+
+  const handleStart = () => {
+    start(selectedStrategy);
+    setTradeHistoryTab("live");
+    setPerformanceTab("live");
+  };
 
   return (
     <div className="px-4 py-3 border-b border-zinc-800">
       <button
-        onClick={running ? stop : () => { const tickers = tradingTickers.length > 0 ? tradingTickers : [selectedTicker]; start(tradeCadence, selectedStrategy, tickers); setTradeHistoryTab("live"); setPerformanceTab("live"); }}
+        onClick={running ? stop : handleStart}
         disabled={loading}
         className={clsx(
           "w-full flex items-center justify-center gap-2 py-2.5 rounded-lg font-medium text-sm transition-all",

@@ -6,6 +6,7 @@ on a portfolio of high-volatility tickers (TSLA, CEG, PLTR, RIVN).
 import asyncio, sys, os, logging
 logging.disable(logging.WARNING)
 os.environ["LOG_LEVEL"] = "ERROR"
+os.environ["PYTHONUNBUFFERED"] = "1"
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import structlog
 structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(logging.ERROR))
@@ -17,10 +18,12 @@ from app.engine import signal_generator as sg
 
 STARTING_BALANCE = 100_000
 TICKERS = ["TSLA", "CEG", "PLTR", "RIVN"]
-STOP_LOSSES = [0.01, 0.015, 0.02, 0.025, 0.03, 0.04]
+STOP_LOSSES = [0.015, 0.02, 0.025, 0.03]
 MAX_HOLDS = [195, 390, 780]  # half-day, 1 day, 2 days
-DAYS = 29
+DAYS = 21  # Yahoo limits 1m data to last 30 days; 21d leaves room for lookback buffer
 POS_PCT = 0.50
+
+P = lambda *a, **kw: print(*a, **kw, flush=True)
 
 
 async def run(symbols, strategy, days=DAYS, stop_pct=0.02, pos_pct=POS_PCT):
@@ -49,18 +52,23 @@ async def run(symbols, strategy, days=DAYS, stop_pct=0.02, pos_pct=POS_PCT):
 async def main():
     results = []
 
-    print("=" * 120)
-    print(f"V8 STOP LOSS × MAX HOLD SWEEP  —  Portfolio: {', '.join(TICKERS)}")
-    print(f"Period: {DAYS}d | Position: {POS_PCT*100:.0f}% | Balance: ${STARTING_BALANCE:,}")
-    print("=" * 120)
-    header = f"  {'SL%':>5s} | {'MaxHold':>8s} | {'P&L%':>8s} | {'P&L$':>10s} | {'#':>3s} | {'WR%':>5s} | {'DD%':>6s} | Per-ticker"
-    print(header)
-    print("-" * 120)
+    P("=" * 120)
+    P(f"V8 STOP LOSS × MAX HOLD SWEEP  —  Portfolio: {', '.join(TICKERS)}")
+    P(f"Period: {DAYS}d | Position: {POS_PCT*100:.0f}% | Balance: ${STARTING_BALANCE:,}")
+    P("=" * 120)
+    P(f"  {'SL%':>5s} | {'MaxHold':>8s} | {'P&L%':>8s} | {'P&L$':>10s} | {'#':>3s} | {'WR%':>5s} | {'DD%':>6s} | Per-ticker")
+    P("-" * 120)
+
+    total_configs = len(STOP_LOSSES) * len(MAX_HOLDS)
+    done = 0
 
     for sl in STOP_LOSSES:
         for mh in MAX_HOLDS:
+            done += 1
             # Mutate v8 globals for this run
             sg._V8_MAX_HOLD_MINUTES = mh
+
+            P(f"  [{done}/{total_configs}] Running SL={sl*100:.1f}% MH={mh}m ...")
 
             r = await run(TICKERS, "refined_rsi_v8", stop_pct=sl)
             if r:
@@ -73,7 +81,6 @@ async def main():
                 results.append(row)
 
                 sign = "+" if r.total_pnl_pct >= 0 else ""
-                # Per-ticker breakdown from trade records
                 per_ticker = {}
                 for t in r.trades:
                     sym = t.get("symbol", "?")
@@ -86,9 +93,9 @@ async def main():
                     f"{s}: {d['pnl']:+.2f}%/{d['n']}t"
                     for s, d in sorted(per_ticker.items())
                 )
-                print(f"  {sl*100:>4.1f}% | {mh:>6d}m | {sign}{r.total_pnl_pct:>7.2f}% | ${r.total_pnl:>+9,.0f} | {r.total_trades:>3d} | {r.win_rate:>5.1f} | {r.max_drawdown_pct:>5.2f}% | {detail}")
+                P(f"  {sl*100:>4.1f}% | {mh:>6d}m | {sign}{r.total_pnl_pct:>7.2f}% | ${r.total_pnl:>+9,.0f} | {r.total_trades:>3d} | {r.win_rate:>5.1f} | {r.max_drawdown_pct:>5.2f}% | {detail}")
             else:
-                print(f"  {sl*100:>4.1f}% | {mh:>6d}m | FAILED")
+                P(f"  {sl*100:>4.1f}% | {mh:>6d}m | FAILED")
 
     # Restore defaults
     sg._V8_MAX_HOLD_MINUTES = 390
@@ -96,13 +103,13 @@ async def main():
     # Rank by P&L%
     results.sort(key=lambda x: x["pnl_pct"], reverse=True)
 
-    print("\n" + "=" * 120)
-    print("RANKED RESULTS (by P&L%)")
-    print("=" * 120)
+    P("\n" + "=" * 120)
+    P("RANKED RESULTS (by P&L%)")
+    P("=" * 120)
     for i, row in enumerate(results):
         sign = "+" if row["pnl_pct"] >= 0 else ""
         marker = " <<<" if i == 0 else ""
-        print(f"  {i+1:>2d}. SL={row['sl']*100:.1f}% MH={row['mh']}m | {sign}{row['pnl_pct']:>7.2f}% | ${row['pnl']:>+9,.0f} | {row['trades']:>3d} trades | WR {row['wr']:>5.1f}% | DD {row['dd']:>5.2f}%{marker}")
+        P(f"  {i+1:>2d}. SL={row['sl']*100:.1f}% MH={row['mh']}m | {sign}{row['pnl_pct']:>7.2f}% | ${row['pnl']:>+9,.0f} | {row['trades']:>3d} trades | WR {row['wr']:>5.1f}% | DD {row['dd']:>5.2f}%{marker}")
 
     # Save results to markdown
     if results:
@@ -111,7 +118,7 @@ async def main():
         os.makedirs(out_dir, exist_ok=True)
         out_path = os.path.join(out_dir, "v8_stoploss_maxhold_sweep.md")
         with open(out_path, "w") as f:
-            f.write(f"# V8 Stop Loss × Max Hold Sweep\n\n")
+            f.write(f"# V8 Stop Loss x Max Hold Sweep\n\n")
             f.write(f"**Date**: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
             f.write(f"**Tickers**: {', '.join(TICKERS)}\n")
             f.write(f"**Period**: {DAYS}d | **Position**: {POS_PCT*100:.0f}% | **Balance**: ${STARTING_BALANCE:,}\n\n")
@@ -125,7 +132,7 @@ async def main():
             f.write(f"|------|-----|---------|------|------|--------|-----|-----|\n")
             for i, row in enumerate(results):
                 f.write(f"| {i+1} | {row['sl']*100:.1f}% | {row['mh']}m | {row['pnl_pct']:+.2f}% | ${row['pnl']:+,.0f} | {row['trades']} | {row['wr']:.1f}% | {row['dd']:.2f}% |\n")
-        print(f"\nResults saved to {out_path}")
+        P(f"\nResults saved to {out_path}")
 
 
 if __name__ == "__main__":

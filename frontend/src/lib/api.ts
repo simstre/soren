@@ -58,10 +58,10 @@ export const api = {
 
   // Engine
   getEngineStatus: () => fetchApi<import("./types").EngineStatus>("/api/engine/status"),
-  startEngine: (timeframe = "5m", strategy = "rsi_divergence_sr", tickers?: string[]) =>
+  startEngine: (strategy: string, tickers?: string[]) =>
     fetchApi<{ status: string }>("/api/engine/start", {
       method: "POST",
-      body: JSON.stringify({ timeframe, strategy, ...(tickers && tickers.length > 0 ? { tickers } : {}) }),
+      body: JSON.stringify({ strategy, ...(tickers && tickers.length > 0 ? { tickers } : {}) }),
     }),
   stopEngine: () => fetchApi<{ status: string }>("/api/engine/stop", { method: "POST" }),
 
@@ -83,8 +83,6 @@ export const api = {
     start_date: string;
     end_date: string;
     speed: number;
-    stop_loss_pct: number;
-    position_size_pct: number;
     strategy: string;
   }) =>
     fetchApi<{ status: string; symbols: string[] }>("/api/replay/start", {
@@ -107,14 +105,9 @@ export const api = {
   getReplayResults: () =>
     fetchApi<import("./types").ReplayResults>("/api/replay/results"),
 
-  // Trading settings
+  // Trading settings (read-only diagnostics)
   getTradingSettings: () =>
     fetchApi<{ max_position_pct: number; max_exposure_pct: number; risk_per_trade_pct: number; stop_loss_pct: number }>(
       "/api/settings/trading"
-    ),
-  updateTradingSettings: (params: { max_position_pct?: number; max_exposure_pct?: number; risk_per_trade_pct?: number; stop_loss_pct?: number }) =>
-    fetchApi<{ max_position_pct: number; max_exposure_pct: number; risk_per_trade_pct: number; stop_loss_pct: number }>(
-      "/api/settings/trading",
-      { method: "PATCH", body: JSON.stringify(params) }
     ),
 };

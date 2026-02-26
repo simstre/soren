@@ -3,9 +3,10 @@
 import { useState, useEffect } from "react";
 import { useReplay } from "@/hooks/useReplay";
 import { useAppStore } from "@/stores/appStore";
+import { api } from "@/lib/api";
+import type { Strategy } from "@/lib/types";
 import {
   Play,
-  Pause,
   Square,
   Loader2,
   RotateCcw,
@@ -17,9 +18,6 @@ import {
   BarChart3,
 } from "lucide-react";
 import clsx from "clsx";
-
-const SPEED_OPTIONS = [1, 2, 5, 10, 50];
-
 
 const PERIOD_PRESETS = [
   { label: "1W", days: 7 },
@@ -43,19 +41,19 @@ function toDateStr(d: Date): string {
   return d.toISOString().split("T")[0];
 }
 
-/** Map timeframe to default period preset label (must match getDefaultDateRange logic). */
+/** Map timeframe to default period preset label. */
 function getDefaultPeriodLabel(timeframe: string): string {
   switch (timeframe) {
-    case "1m": return "1W";   // 2 days — closest preset
-    case "5m": return "1W";   // 7 days
-    case "15m": return "1M";  // 14 days — closest preset
-    case "1h": return "1M";   // 1 month
-    case "1D": return "6M";   // 6 months
+    case "1m": return "1W";
+    case "5m": return "1W";
+    case "15m": return "1M";
+    case "1h": return "1M";
+    case "1D": return "6M";
     default: return "1W";
   }
 }
 
-/** Get default date range based on trade cadence. */
+/** Get default date range based on timeframe. */
 function getDefaultDateRange(timeframe: string): { start: string; end: string } {
   const end = getLastWeekday();
   const start = new Date(end);
@@ -84,30 +82,32 @@ function getDefaultDateRange(timeframe: string): { start: string; end: string } 
 }
 
 export function ReplayPanel() {
-  const { status, results, loading, start, stop, pause, resume, setSpeed, clearResults } =
+  const { status, results, loading, start, stop, clearResults } =
     useReplay();
   const selectedTicker = useAppStore((s) => s.selectedTicker);
-  const tradingTickers = useAppStore((s) => s.tradingTickers);
   const selectedStrategy = useAppStore((s) => s.selectedStrategy);
-  const positionSizePct = useAppStore((s) => s.positionSizePct);
-  const stopLossPct = useAppStore((s) => s.stopLossPct);
 
-  const tradeCadence = useAppStore((s) => s.tradeCadence);
-  const [startDate, setStartDate] = useState(() => getDefaultDateRange(tradeCadence).start);
-  const [endDate, setEndDate] = useState(() => getDefaultDateRange(tradeCadence).end);
-  const [speed, setSpeedLocal] = useState(10);
-  const [expanded, setExpanded] = useState(true);
-  const [activePeriod, setActivePeriod] = useState<string | null>(() => getDefaultPeriodLabel(tradeCadence));
-
-  // Update date range when trade cadence changes (from sidebar)
+  // Fetch strategies to get the selected one's timeframe
+  const [strategies, setStrategies] = useState<Strategy[]>([]);
   useEffect(() => {
-    const range = getDefaultDateRange(tradeCadence);
+    api.getStrategies().then(setStrategies).catch(() => {});
+  }, []);
+  const selectedDef = strategies.find((s) => s.id === selectedStrategy);
+  const timeframe = selectedDef?.timeframe ?? "1m";
+
+  const [startDate, setStartDate] = useState(() => getDefaultDateRange("1m").start);
+  const [endDate, setEndDate] = useState(() => getDefaultDateRange("1m").end);
+  const [expanded, setExpanded] = useState(true);
+  const [activePeriod, setActivePeriod] = useState<string | null>(() => getDefaultPeriodLabel("1m"));
+  const [scanningTickers, setScanningTickers] = useState(false);
+
+  // Update date range when strategy timeframe changes
+  useEffect(() => {
+    const range = getDefaultDateRange(timeframe);
     setStartDate(range.start);
     setEndDate(range.end);
-    setActivePeriod(getDefaultPeriodLabel(tradeCadence));
-  }, [tradeCadence]);
-
-
+    setActivePeriod(getDefaultPeriodLabel(timeframe));
+  }, [timeframe]);
 
   const handlePeriodPreset = (days: number, label: string) => {
     const end = getLastWeekday();
@@ -124,28 +124,29 @@ export function ReplayPanel() {
   };
 
   const isRunning = status?.running ?? false;
-  const isPaused = status?.paused ?? false;
   const progress = status?.progress ?? 0;
 
   const handleStart = async () => {
-    const symbols = tradingTickers.length > 0 ? tradingTickers : [selectedTicker];
+    // Auto-scan for tickers
+    setScanningTickers(true);
+    let symbols: string[];
+    try {
+      const results = await api.scanFitness(10, selectedStrategy);
+      symbols = results.map((r) => r.symbol);
+      if (symbols.length === 0) symbols = [selectedTicker];
+    } catch {
+      symbols = [selectedTicker];
+    }
+    setScanningTickers(false);
+
     await start({
       symbols,
-      timeframe: tradeCadence,
+      timeframe,
       start_date: startDate,
       end_date: endDate,
-      speed,
-      stop_loss_pct: stopLossPct,
-      position_size_pct: positionSizePct,
+      speed: 1,
       strategy: selectedStrategy,
     });
-  };
-
-  const handleSpeedChange = async (newSpeed: number) => {
-    setSpeedLocal(newSpeed);
-    if (isRunning) {
-      await setSpeed(newSpeed);
-    }
   };
 
   const handleGoBack = () => {
@@ -220,60 +221,38 @@ export function ReplayPanel() {
                 </div>
               </div>
 
-              {/* Speed */}
-              <div>
-                <label className="block text-xs text-zinc-500 mb-1">
-                  Speed
-                </label>
-                <div className="flex gap-1">
-                  {SPEED_OPTIONS.map((s) => (
-                    <button
-                      key={s}
-                      onClick={() => handleSpeedChange(s)}
-                      className={clsx(
-                        "flex-1 py-1 text-xs rounded transition-colors",
-                        speed === s
-                          ? "bg-blue-500/20 text-blue-400 border border-blue-500/30"
-                          : "bg-zinc-900 text-zinc-400 border border-zinc-700 hover:border-zinc-600"
-                      )}
-                    >
-                      {s}x
-                    </button>
-                  ))}
-                </div>
-              </div>
-
               {/* Start button */}
               <button
                 onClick={handleStart}
-                disabled={loading}
+                disabled={loading || scanningTickers}
                 className={clsx(
                   "w-full flex items-center justify-center gap-2 py-2 rounded-lg font-medium text-sm transition-all",
                   "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 border border-blue-500/20",
-                  loading && "opacity-60 cursor-not-allowed"
+                  (loading || scanningTickers) && "opacity-60 cursor-not-allowed"
                 )}
               >
-                {loading ? (
+                {loading || scanningTickers ? (
                   <Loader2 size={16} className="animate-spin" />
                 ) : (
                   <Play size={16} />
                 )}
-                Backtest {tradingTickers.length > 1 ? `${tradingTickers.length} Tickers` : tradingTickers.length === 1 ? tradingTickers[0] : selectedTicker}
+                {scanningTickers ? "Scanning tickers..." : "Backtest"}
               </button>
             </>
           )}
 
-          {/* Playback controls (when running) */}
+          {/* Running state */}
           {isRunning && (
             <>
               {/* Progress bar */}
               <div>
                 <div className="flex justify-between text-xs text-zinc-500 mb-1">
-                  <span>
-                    {status?.symbol} {status?.timeframe}
+                  <span className="flex items-center gap-1.5">
+                    <Loader2 size={12} className="animate-spin text-blue-400" />
+                    Running backtest...
                   </span>
                   <span>
-                    {status?.bar_index} / {status?.total_bars} ({progress.toFixed(1)}%)
+                    {progress.toFixed(1)}%
                   </span>
                 </div>
                 <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
@@ -284,46 +263,14 @@ export function ReplayPanel() {
                 </div>
               </div>
 
-              {/* Controls row */}
-              <div className="flex gap-2">
-                <button
-                  onClick={isPaused ? resume : pause}
-                  className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
-                >
-                  {isPaused ? <Play size={14} /> : <Pause size={14} />}
-                  {isPaused ? "Resume" : "Pause"}
-                </button>
-                <button
-                  onClick={stop}
-                  className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20 transition-colors"
-                >
-                  <Square size={14} />
-                  Stop
-                </button>
-              </div>
-
-              {/* Speed controls */}
-              <div>
-                <label className="block text-xs text-zinc-500 mb-1">
-                  Speed
-                </label>
-                <div className="flex gap-1">
-                  {SPEED_OPTIONS.map((s) => (
-                    <button
-                      key={s}
-                      onClick={() => handleSpeedChange(s)}
-                      className={clsx(
-                        "flex-1 py-1 text-xs rounded transition-colors",
-                        (status?.speed ?? speed) === s
-                          ? "bg-blue-500/20 text-blue-400 border border-blue-500/30"
-                          : "bg-zinc-900 text-zinc-400 border border-zinc-700 hover:border-zinc-600"
-                      )}
-                    >
-                      {s}x
-                    </button>
-                  ))}
-                </div>
-              </div>
+              {/* Stop button */}
+              <button
+                onClick={stop}
+                className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20 transition-colors"
+              >
+                <Square size={14} />
+                Stop
+              </button>
             </>
           )}
 

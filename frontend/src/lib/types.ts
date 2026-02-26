@@ -135,6 +135,10 @@ export interface Strategy {
   name: string;
   description: string;
   entry_rule: string;
+  timeframe: string;
+  position_size_pct: number;
+  stop_loss_pct: number;
+  max_exposure_pct: number;
 }
 
 // Replay / Backtest types

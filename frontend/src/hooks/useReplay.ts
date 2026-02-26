@@ -26,8 +26,6 @@ export function useReplay() {
       start_date: string;
       end_date: string;
       speed: number;
-      stop_loss_pct: number;
-      position_size_pct: number;
       strategy: string;
     }) => {
       setLoading(true);
