@@ -1,0 +1,315 @@
+[
+  {
+    "stop_mult": 2.0,
+    "target_mult": 5.0,
+    "note": "v1 worst: -$666",
+    "v1": {
+      "trades": 110,
+      "wr": 31.8,
+      "pnl": -665.57,
+      "pnl_pct": -0.67,
+      "dd": 0.99,
+      "long_wr": 39.6,
+      "short_wr": 24.6,
+      "long_pnl": -29.97,
+      "short_pnl": -635.6,
+      "exit_reasons": {
+        "stop_loss": 75,
+        "profit_target": 18,
+        "reversal": 15,
+        "max_hold": 2
+      },
+      "gated": 7
+    },
+    "v6": {
+      "trades": 129,
+      "wr": 27.1,
+      "pnl": 106.87,
+      "pnl_pct": 0.11,
+      "dd": 0.81,
+      "long_wr": 23.9,
+      "short_wr": 31.0,
+      "long_pnl": 106.55,
+      "short_pnl": 0.32,
+      "exit_reasons": {
+        "stop_loss": 92,
+        "max_hold": 8,
+        "profit_target": 29
+      },
+      "gated": 7
+    }
+  },
+  {
+    "stop_mult": 2.0,
+    "target_mult": 4.0,
+    "note": "v1: -$507",
+    "v1": {
+      "trades": 125,
+      "wr": 37.6,
+      "pnl": -507.02,
+      "pnl_pct": -0.51,
+      "dd": 0.98,
+      "long_wr": 44.1,
+      "short_wr": 31.8,
+      "long_pnl": 60.82,
+      "short_pnl": -567.84,
+      "exit_reasons": {
+        "stop_loss": 78,
+        "profit_target": 33,
+        "reversal": 11,
+        "max_hold": 3
+      },
+      "gated": 6
+    },
+    "v6": {
+      "trades": 151,
+      "wr": 30.5,
+      "pnl": 183.46,
+      "pnl_pct": 0.18,
+      "dd": 1.0,
+      "long_wr": 27.7,
+      "short_wr": 33.8,
+      "long_pnl": 11.51,
+      "short_pnl": 171.95,
+      "exit_reasons": {
+        "stop_loss": 103,
+        "max_hold": 6,
+        "profit_target": 42
+      },
+      "gated": 6
+    }
+  },
+  {
+    "stop_mult": 2.0,
+    "target_mult": 3.0,
+    "note": "v1: -$480",
+    "v1": {
+      "trades": 133,
+      "wr": 43.6,
+      "pnl": -479.78,
+      "pnl_pct": -0.48,
+      "dd": 0.8,
+      "long_wr": 47.5,
+      "short_wr": 40.3,
+      "long_pnl": 60.22,
+      "short_pnl": -540.0,
+      "exit_reasons": {
+        "stop_loss": 75,
+        "profit_target": 47,
+        "reversal": 9,
+        "max_hold": 2
+      },
+      "gated": 5
+    },
+    "v6": {
+      "trades": 170,
+      "wr": 34.7,
+      "pnl": 213.78,
+      "pnl_pct": 0.21,
+      "dd": 0.86,
+      "long_wr": 33.7,
+      "short_wr": 35.9,
+      "long_pnl": 211.14,
+      "short_pnl": 2.64,
+      "exit_reasons": {
+        "stop_loss": 110,
+        "profit_target": 57,
+        "max_hold": 3
+      },
+      "gated": 4
+    }
+  },
+  {
+    "stop_mult": 2.0,
+    "target_mult": 2.0,
+    "note": "v1 best: +$177",
+    "v1": {
+      "trades": 192,
+      "wr": 56.8,
+      "pnl": 176.79,
+      "pnl_pct": 0.18,
+      "dd": 0.7,
+      "long_wr": 58.2,
+      "short_wr": 55.4,
+      "long_pnl": 362.05,
+      "short_pnl": -185.26,
+      "exit_reasons": {
+        "profit_target": 105,
+        "stop_loss": 83,
+        "reversal": 4
+      },
+      "gated": 2
+    },
+    "v6": {
+      "trades": 204,
+      "wr": 45.6,
+      "pnl": 119.68,
+      "pnl_pct": 0.12,
+      "dd": 0.65,
+      "long_wr": 45.5,
+      "short_wr": 45.7,
+      "long_pnl": 308.65,
+      "short_pnl": -188.97,
+      "exit_reasons": {
+        "stop_loss": 110,
+        "profit_target": 92,
+        "max_hold": 2
+      },
+      "gated": 3
+    }
+  },
+  {
+    "stop_mult": 1.5,
+    "target_mult": 5.0,
+    "note": "v1: -$289",
+    "v1": {
+      "trades": 106,
+      "wr": 27.4,
+      "pnl": -288.73,
+      "pnl_pct": -0.29,
+      "dd": 0.79,
+      "long_wr": 33.3,
+      "short_wr": 21.8,
+      "long_pnl": 76.19,
+      "short_pnl": -364.92,
+      "exit_reasons": {
+        "stop_loss": 77,
+        "profit_target": 13,
+        "reversal": 14,
+        "max_hold": 2
+      },
+      "gated": 7
+    },
+    "v6": {
+      "trades": 108,
+      "wr": 24.1,
+      "pnl": 398.59,
+      "pnl_pct": 0.4,
+      "dd": 0.48,
+      "long_wr": 19.4,
+      "short_wr": 30.4,
+      "long_pnl": 135.05,
+      "short_pnl": 263.54,
+      "exit_reasons": {
+        "stop_loss": 82,
+        "max_hold": 5,
+        "profit_target": 21
+      },
+      "gated": 8
+    }
+  },
+  {
+    "stop_mult": 1.5,
+    "target_mult": 2.0,
+    "note": "v1: +$16",
+    "v1": {
+      "trades": 179,
+      "wr": 48.0,
+      "pnl": 16.06,
+      "pnl_pct": 0.02,
+      "dd": 0.52,
+      "long_wr": 50.6,
+      "short_wr": 45.7,
+      "long_pnl": 243.8,
+      "short_pnl": -227.74,
+      "exit_reasons": {
+        "profit_target": 84,
+        "stop_loss": 93,
+        "reversal": 2
+      },
+      "gated": 3
+    },
+    "v6": {
+      "trades": 217,
+      "wr": 39.6,
+      "pnl": 191.8,
+      "pnl_pct": 0.19,
+      "dd": 0.48,
+      "long_wr": 39.7,
+      "short_wr": 39.6,
+      "long_pnl": 252.91,
+      "short_pnl": -61.11,
+      "exit_reasons": {
+        "stop_loss": 131,
+        "profit_target": 86
+      },
+      "gated": 3
+    }
+  },
+  {
+    "stop_mult": 1.0,
+    "target_mult": 5.0,
+    "note": "v1: -$182",
+    "v1": {
+      "trades": 78,
+      "wr": 20.5,
+      "pnl": -181.5,
+      "pnl_pct": -0.18,
+      "dd": 0.62,
+      "long_wr": 30.6,
+      "short_wr": 11.9,
+      "long_pnl": 155.09,
+      "short_pnl": -336.59,
+      "exit_reasons": {
+        "stop_loss": 62,
+        "profit_target": 5,
+        "reversal": 11
+      },
+      "gated": 8
+    },
+    "v6": {
+      "trades": 61,
+      "wr": 14.8,
+      "pnl": -38.71,
+      "pnl_pct": -0.04,
+      "dd": 0.3,
+      "long_wr": 14.7,
+      "short_wr": 14.8,
+      "long_pnl": 4.46,
+      "short_pnl": -43.17,
+      "exit_reasons": {
+        "stop_loss": 52,
+        "max_hold": 2,
+        "profit_target": 7
+      },
+      "gated": 10
+    }
+  },
+  {
+    "stop_mult": 0.5,
+    "target_mult": 2.0,
+    "note": "v1: -$29",
+    "v1": {
+      "trades": 69,
+      "wr": 21.7,
+      "pnl": -28.63,
+      "pnl_pct": -0.03,
+      "dd": 0.23,
+      "long_wr": 23.3,
+      "short_wr": 20.5,
+      "long_pnl": -4.54,
+      "short_pnl": -24.09,
+      "exit_reasons": {
+        "profit_target": 15,
+        "stop_loss": 54
+      },
+      "gated": 9
+    },
+    "v6": {
+      "trades": 72,
+      "wr": 19.4,
+      "pnl": 105.73,
+      "pnl_pct": 0.11,
+      "dd": 0.13,
+      "long_wr": 19.0,
+      "short_wr": 20.0,
+      "long_pnl": 82.94,
+      "short_pnl": 22.79,
+      "exit_reasons": {
+        "stop_loss": 58,
+        "profit_target": 14
+      },
+      "gated": 9
+    }
+  }
+]

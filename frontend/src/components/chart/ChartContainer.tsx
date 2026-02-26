@@ -10,7 +10,7 @@ import { api } from "@/lib/api";
 import { ChartToolbar } from "./ChartToolbar";
 import { TickerSearch } from "./TickerSearch";
 import { applyOverlays, clearOverlays, type OverlayHandles } from "./ChartOverlays";
-import type { WSMessage, Trade, CandleData } from "@/lib/types";
+import type { WSMessage, Trade } from "@/lib/types";
 
 /** Get the local timezone abbreviation (e.g. "EST", "PST", "CET"). */
 function getTimezoneAbbr(): string {
@@ -46,8 +46,9 @@ export function ChartContainer() {
   const replayMode = useAppStore((s) => s.replayMode);
   const selectedTradeId = useAppStore((s) => s.selectedTradeId);
   const [companyName, setCompanyName] = useState("");
-  const prevCandleCountRef = useRef(0);
   const autoScrollRef = useRef(true);
+  const rafRef = useRef<number | null>(null);
+  const prevCandleCountRef = useRef(0);
 
   // Fetch company name when ticker changes
   useEffect(() => {
@@ -146,28 +147,29 @@ export function ChartContainer() {
     };
   }, [onVisibleLogicalRangeChanged]);
 
-  // Update data when candles change — use incremental update() when possible
+  // Update chart when candles change — debounced via rAF for replay performance
   useEffect(() => {
     if (!seriesRef.current || candles.length === 0) return;
 
-    const utcOffset = getLocalUtcOffsetSeconds();
-    const toBarData = (c: CandleData) => ({
-      time: (Math.floor(new Date(c.timestamp).getTime() / 1000) + utcOffset) as unknown as import("lightweight-charts").Time,
-      open: c.open,
-      high: c.high,
-      low: c.low,
-      close: c.close,
-    });
+    // Cancel any pending frame to coalesce rapid updates
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+    }
 
-    const prevCount = prevCandleCountRef.current;
-    const isAppend = candles.length > prevCount && prevCount > 0;
-    const isInitial = isInitialLoadRef.current || prevCount === 0;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      if (!seriesRef.current) return;
 
-    if (isInitial || !isAppend) {
-      // Full reset: initial load, ticker switch, or data prepend
+      const utcOffset = getLocalUtcOffsetSeconds();
       const seen = new Set<number>();
       const data = candles
-        .map(toBarData)
+        .map((c) => ({
+          time: (Math.floor(new Date(c.timestamp).getTime() / 1000) + utcOffset) as unknown as import("lightweight-charts").Time,
+          open: c.open,
+          high: c.high,
+          low: c.low,
+          close: c.close,
+        }))
         .filter((d) => {
           const t = d.time as unknown as number;
           if (seen.has(t)) return false;
@@ -176,64 +178,39 @@ export function ChartContainer() {
         })
         .sort((a, b) => (a.time as unknown as number) - (b.time as unknown as number));
 
-      seriesRef.current.setData(data);
+      // Incremental update: if only 1-2 candles were appended, use update() instead of full setData()
+      const prevCount = prevCandleCountRef.current;
+      if (prevCount > 0 && data.length - prevCount > 0 && data.length - prevCount <= 2) {
+        for (const c of data.slice(prevCount - 1)) {
+          seriesRef.current.update(c);
+        }
+      } else {
+        seriesRef.current.setData(data);
+      }
+      prevCandleCountRef.current = data.length;
 
       if (isInitialLoadRef.current) {
         chartRef.current?.timeScale().fitContent();
         isInitialLoadRef.current = false;
         autoScrollRef.current = true;
-      }
-    } else {
-      // Incremental: just update the newest candle(s) — much faster
-      // Verify the new data is actually newer than what's in the series
-      const seriesData = seriesRef.current.data();
-      const lastSeriesTime = seriesData.length > 0
-        ? (seriesData[seriesData.length - 1].time as unknown as number)
-        : 0;
-      const newCandles = candles.slice(prevCount - 1); // include last bar for update
-      const firstNewTime = newCandles.length > 0
-        ? (Math.floor(new Date(newCandles[0].timestamp).getTime() / 1000) + utcOffset)
-        : 0;
-
-      let updateOk = firstNewTime >= lastSeriesTime && lastSeriesTime > 0;
-      if (updateOk) {
-        try {
-          for (const c of newCandles) {
-            seriesRef.current.update(toBarData(c));
-          }
-        } catch {
-          updateOk = false;
-        }
-      }
-      if (!updateOk) {
-        // Fall back to full setData on any issue
-        const seen = new Set<number>();
-        const data = candles
-          .map(toBarData)
-          .filter((d) => {
-            const t = d.time as unknown as number;
-            if (seen.has(t)) return false;
-            seen.add(t);
-            return true;
-          })
-          .sort((a, b) => (a.time as unknown as number) - (b.time as unknown as number));
-        seriesRef.current.setData(data);
-      }
-
-      // Auto-scroll to keep the latest bar visible during replay
-      if (autoScrollRef.current && chartRef.current) {
+      } else if (autoScrollRef.current && chartRef.current) {
         chartRef.current.timeScale().scrollToRealTime();
       }
-    }
+    });
 
-    prevCandleCountRef.current = candles.length;
+    return () => {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
   }, [candles]);
 
   // Reset initial load flag when ticker/timeframe changes
   useEffect(() => {
     isInitialLoadRef.current = true;
-    prevCandleCountRef.current = 0;
     autoScrollRef.current = true;
+    prevCandleCountRef.current = 0;
     // Clear trade markers for the new ticker
     tradeMarkersRef.current = [];
     if (tradeMarkerHandleRef.current) {

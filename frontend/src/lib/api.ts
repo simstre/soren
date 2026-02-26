@@ -71,9 +71,9 @@ export const api = {
     fetchApi<import("./types").ScannerResult[]>(`/api/scanner/run?preset_id=${presetId}`, {
       method: "POST",
     }),
-  scanFitness: (topN = 10) =>
+  scanFitness: (topN = 10, strategy?: string) =>
     fetchApi<{ symbol: string; total_score: number; price: number; avg_volume: number; atr_pct: number }[]>(
-      `/api/scanner/fitness?top_n=${topN}`
+      `/api/scanner/fitness?top_n=${topN}${strategy ? `&strategy=${strategy}` : ""}`
     ),
 
   // Replay

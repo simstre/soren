@@ -64,7 +64,7 @@ class ReplayBrokerAdapter(BrokerAdapter):
         pos = self._positions[symbol]
         return "BUY" if pos.quantity > 0 else "SELL"
 
-    def close_position(self, symbol: str, price: float) -> dict | None:
+    def close_position(self, symbol: str, price: float, exit_reason: str = "position_flip") -> dict | None:
         """Close an existing position at the given price. Returns trade dict or None."""
         if symbol not in self._positions:
             return None
@@ -103,7 +103,7 @@ class ReplayBrokerAdapter(BrokerAdapter):
             "exit_price": round(price, 2),
             "pnl": round(pnl, 2),
             "pnl_pct": round(pnl_pct, 2),
-            "exit_reason": "position_flip",
+            "exit_reason": exit_reason,
         }
         self._closed_trades.append(trade)
         return trade

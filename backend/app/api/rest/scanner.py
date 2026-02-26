@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from app.scanner.presets import PRESETS
 from app.scanner.runner import run_scan
 from app.scanner.fitness import run_fitness_scan
+from app.engine.strategies import STRATEGY_MAP, ScanConfig
 
 router = APIRouter(prefix="/api/scanner", tags=["scanner"])
 
@@ -46,9 +47,16 @@ class FitnessResultResponse(BaseModel):
 
 
 @router.get("/fitness", response_model=list[FitnessResultResponse])
-async def scan_fitness(top_n: int = Query(15, ge=1, le=50)):
+async def scan_fitness(
+    top_n: int = Query(15, ge=1, le=50),
+    strategy: str = Query("refined_rsi", description="Strategy ID for scanning parameters"),
+):
     """Run strategy-fitness scan and return scored tickers."""
-    results = await run_fitness_scan(top_n=top_n)
+    scan_config: ScanConfig | None = None
+    strat = STRATEGY_MAP.get(strategy)
+    if strat is not None:
+        scan_config = strat.scan_config
+    results = await run_fitness_scan(top_n=top_n, scan_config=scan_config)
     return [
         FitnessResultResponse(
             symbol=r.symbol,

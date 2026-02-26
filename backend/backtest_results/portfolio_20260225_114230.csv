@@ -1,0 +1,5 @@
+position_size_pct,total_pnl,total_pnl_pct,monthly_pnl_pct_est,win_rate,total_trades,winning_trades,losing_trades,max_drawdown,max_drawdown_pct,starting_balance,ending_balance,UNH_pnl,UNH_pnl_pct,UNH_trades,UNH_win_rate,AAPL_pnl,AAPL_pnl_pct,AAPL_trades,AAPL_win_rate,GOOGL_pnl,GOOGL_pnl_pct,GOOGL_trades,GOOGL_win_rate,MSFT_pnl,MSFT_pnl_pct,MSFT_trades,MSFT_win_rate,TSLA_pnl,TSLA_pnl_pct,TSLA_trades,TSLA_win_rate
+0.25,340.96,0.34,1.02,57.9,38,22,16,492.62,0.49,100000.0,100340.98,318.62,0.32,11,63.6,233.78,0.23,8,75.0,-61.56,-0.06,9,44.4,23.41,0.02,5,60.0,-173.29,-0.17,5,40.0
+0.33,340.96,0.34,1.02,57.9,38,22,16,492.62,0.49,100000.0,100340.98,318.62,0.32,11,63.6,233.78,0.23,8,75.0,-61.56,-0.06,9,44.4,23.41,0.02,5,60.0,-173.29,-0.17,5,40.0
+0.5,340.96,0.34,1.02,57.9,38,22,16,492.62,0.49,100000.0,100340.98,318.62,0.32,11,63.6,233.78,0.23,8,75.0,-61.56,-0.06,9,44.4,23.41,0.02,5,60.0,-173.29,-0.17,5,40.0
+1.0,340.96,0.34,1.02,57.9,38,22,16,492.62,0.49,100000.0,100340.98,318.62,0.32,11,63.6,233.78,0.23,8,75.0,-61.56,-0.06,9,44.4,23.41,0.02,5,60.0,-173.29,-0.17,5,40.0

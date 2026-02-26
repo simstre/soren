@@ -37,7 +37,14 @@ from app.engine.signal_generator import (
     check_reversal_signal,
     detect_rsi_divergence,
     generate_signals_refined_rsi,
+    generate_signals_refined_rsi_v2,
+    generate_signals_refined_rsi_v3,
+    generate_signals_refined_rsi_v4,
+    generate_signals_refined_rsi_v5,
+    generate_signals_refined_rsi_v6,
+    generate_signals_refined_rsi_v7,
     check_exit_refined_rsi,
+    check_exit_refined_rsi_v6,
     get_timeframe_params,
 )
 from app.engine.divergence_tracker import (
@@ -54,17 +61,17 @@ structlog.configure(processors=[structlog.dev.ConsoleRenderer()])
 logger = structlog.get_logger()
 
 # ── Configuration ──────────────────────────────────────────────────────
-TICKERS = ["UNH", "AAPL", "GOOGL", "MSFT", "TSLA"]
-POSITION_SIZES = [0.25, 0.33, 0.50, 1.00]
+TICKERS = ["UNH", "AAPL", "GOOGL", "MSFT", "TSLA", "NVDA", "AMZN", "META", "PFE", "JPM"]
+POSITION_SIZES = [0.25]
 TIMEFRAME = "1m"
-STRATEGY = "refined_rsi"
+STRATEGY = "refined_rsi_v7"
 STARTING_BALANCE = 100_000.0
 MAX_EXPOSURE_PCT = 1.00  # 100% total exposure cap
 LOOKBACK_BARS = 200
 
-# Date range: last 7 trading days
+# Date range: 29 calendar days
 END_DATE = datetime.now().strftime("%Y-%m-%d")
-START_DATE = (datetime.now() - timedelta(days=9)).strftime("%Y-%m-%d")  # 9 calendar days ~ 7 trading
+START_DATE = (datetime.now() - timedelta(days=29)).strftime("%Y-%m-%d")
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "backtest_results"
 
@@ -240,6 +247,7 @@ def _handle_closed_trade(
             tr["pnl"] = ct["pnl"]
             tr["pnl_pct"] = ct["pnl_pct"]
             tr["status"] = "CLOSED"
+            tr["exit_reason"] = ct.get("exit_reason", "unknown")
 
             pnl = ct["pnl"] or 0
             per_ticker_pnl[symbol] = per_ticker_pnl.get(symbol, 0) + pnl
@@ -313,7 +321,17 @@ async def _process_bar(
         analysis = run_analysis(symbol, df)
         close_prices = df["close"].tolist()
 
-        signals = generate_signals_refined_rsi(
+        _signal_dispatch = {
+            "refined_rsi": generate_signals_refined_rsi,
+            "refined_rsi_v2": generate_signals_refined_rsi_v2,
+            "refined_rsi_v3": generate_signals_refined_rsi_v3,
+            "refined_rsi_v4": generate_signals_refined_rsi_v4,
+            "refined_rsi_v5": generate_signals_refined_rsi_v5,
+            "refined_rsi_v6": generate_signals_refined_rsi_v6,
+            "refined_rsi_v7": generate_signals_refined_rsi_v7,
+        }
+        gen_fn = _signal_dispatch.get(STRATEGY, generate_signals_refined_rsi)
+        signals = gen_fn(
             analysis, df,
             stop_loss_pct=0.0,  # ATR-based stops
             best_divergence=best_divergence,
@@ -342,19 +360,28 @@ async def _process_bar(
                 except (ValueError, TypeError):
                     pass
 
-            reversal = check_exit_refined_rsi(
-                analysis, df, current_side,
-                entry_time=entry_time,
-                current_time=current_time,
-                tf_params=tf_params,
-            )
+            if STRATEGY in ("refined_rsi_v6", "refined_rsi_v7"):
+                reversal = check_exit_refined_rsi_v6(
+                    analysis, df, current_side,
+                    entry_time=entry_time,
+                    current_time=current_time,
+                    tf_params=tf_params,
+                )
+            else:
+                reversal = check_exit_refined_rsi(
+                    analysis, df, current_side,
+                    entry_time=entry_time,
+                    current_time=current_time,
+                    tf_params=tf_params,
+                )
 
             if reversal:
                 close_price = float(df["close"].iloc[-1])
-                closed_trade = broker.close_position(symbol, close_price)
+                exit_reason = reversal if isinstance(reversal, str) else "reversal"
+                closed_trade = broker.close_position(symbol, close_price, exit_reason=exit_reason)
                 if closed_trade:
                     _close_trade_record(
-                        closed_trade, ts_str, "Reversal exit",
+                        closed_trade, ts_str, exit_reason,
                         trade_records, tracker,
                         cooldown_bars, symbol, tf_params,
                         per_ticker_pnl, per_ticker_trades, per_ticker_wins,
@@ -368,7 +395,7 @@ async def _process_bar(
                 if opposite:
                     best_opposite = max(opposite, key=lambda s: s.confidence)
                     close_price = best_opposite.entry_price
-                    closed_trade = broker.close_position(symbol, close_price)
+                    closed_trade = broker.close_position(symbol, close_price, exit_reason="position_flip")
                     if closed_trade:
                         _close_trade_record(
                             closed_trade, ts_str, best_opposite.reason,
@@ -448,6 +475,7 @@ async def _process_bar(
             "ib_order_id": order_id,
             "signal_id": None,
             "divergence_timeframe": best_signal.divergence_timeframe,
+            "exit_reason": None,
         }
         trade_records.append(trade_record)
 
@@ -469,6 +497,7 @@ def _close_trade_record(
             tr["pnl"] = closed_trade["pnl"]
             tr["pnl_pct"] = closed_trade["pnl_pct"]
             tr["status"] = "CLOSED"
+            tr["exit_reason"] = closed_trade.get("exit_reason", close_reason)
             tr["reason"] = tr["reason"] + f" | Closed: {close_reason}"
 
             pnl = closed_trade["pnl"] or 0

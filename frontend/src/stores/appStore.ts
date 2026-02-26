@@ -33,6 +33,7 @@ interface AppState {
   setTradingTickers: (tickers: string[]) => void;
   setTradeCadence: (cadence: string) => void;
   loadRefinedRsiPreset: () => void;
+  loadStrategyPreset: (strategyId: string) => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -60,9 +61,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSelectedTrade: (trade) => set({ selectedTrade: trade }),
   setSelectedStrategy: (strategy) => {
     set({ selectedStrategy: strategy });
-    if (strategy === "refined_rsi") {
-      get().loadRefinedRsiPreset();
-    }
+    get().loadStrategyPreset(strategy);
   },
   setPositionSizePct: (pct) => {
     set({ positionSizePct: pct });
@@ -83,16 +82,19 @@ export const useAppStore = create<AppState>((set, get) => ({
   setTradingTickers: (tickers) => set({ tradingTickers: tickers }),
   setTradeCadence: (cadence) => set({ tradeCadence: cadence }),
   loadRefinedRsiPreset: () => {
+    get().loadStrategyPreset("refined_rsi");
+  },
+  loadStrategyPreset: (strategyId) => {
     set({
-      selectedStrategy: "refined_rsi",
+      selectedStrategy: strategyId,
       tradeCadence: "1m",
       timeframe: "1m",
       positionSizePct: 0.50,
     });
     api.updateTradingSettings({ max_position_pct: 0.50 }).catch(() => {});
-    // Scan for best tickers
+    // Scan for best tickers using selected strategy's scan config
     set({ scanning: true });
-    api.scanFitness(3).then((results) => {
+    api.scanFitness(10, strategyId).then((results) => {
       const tickers = results.map((r) => r.symbol);
       set({ tradingTickers: tickers });
     }).catch(() => {}).finally(() => {

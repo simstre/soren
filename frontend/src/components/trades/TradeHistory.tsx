@@ -12,6 +12,21 @@ function parseGrade(reason: string): string | null {
   return match ? match[1] : null;
 }
 
+/** Map exit_reason to abbreviated colored label */
+const EXIT_LABELS: Record<string, { label: string; cls: string }> = {
+  stop_loss:     { label: "SL",   cls: "text-red-400" },
+  profit_target: { label: "TP",   cls: "text-emerald-400" },
+  max_hold:      { label: "MH",   cls: "text-yellow-500/70" },
+  eod_close:     { label: "EOD",  cls: "text-yellow-500/70" },
+  reversal:      { label: "REV",  cls: "text-yellow-500/70" },
+  position_flip: { label: "FLIP", cls: "text-yellow-500/70" },
+};
+
+function formatExitReason(reason?: string): { label: string; cls: string } {
+  if (!reason) return { label: "---", cls: "text-zinc-600" };
+  return EXIT_LABELS[reason] ?? { label: reason, cls: "text-zinc-400" };
+}
+
 const GRADE_COLORS: Record<string, string> = {
   A: "bg-emerald-500/15 text-emerald-400",
   B: "bg-blue-500/15 text-blue-400",
@@ -29,7 +44,7 @@ function TradeTable({ trades, loading }: { trades: Trade[]; loading: boolean }) 
   return (
     <div className="flex-1 overflow-y-auto">
       <table className="w-full text-sm table-fixed">
-        {/* Time | Symbol | Grade | Side | Qty | Entry | Exit | Stop | Target | P&L | Reason | Status */}
+        {/* Time | Symbol | Grade | Side | Qty | Entry | Exit | Stop | Target | P&L | Reason | Exit Reason | Status */}
         <colgroup>
           <col className="w-[140px]" />
           <col className="w-[70px]" />
@@ -42,6 +57,7 @@ function TradeTable({ trades, loading }: { trades: Trade[]; loading: boolean }) 
           <col className="w-[80px]" />
           <col className="w-[120px]" />
           <col />
+          <col className="w-[52px]" />
           <col className="w-[68px]" />
         </colgroup>
         <thead className="sticky top-0 bg-zinc-900">
@@ -57,19 +73,20 @@ function TradeTable({ trades, loading }: { trades: Trade[]; loading: boolean }) 
             <th className="text-right px-2 py-2 font-medium">Target</th>
             <th className="text-right px-2 py-2 font-medium">P&L</th>
             <th className="text-left px-2 py-2 font-medium">Reason</th>
+            <th className="text-center px-1 py-2 font-medium">Exit</th>
             <th className="text-center px-2 py-2 font-medium">Status</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-zinc-800/50">
           {loading ? (
             <tr>
-              <td colSpan={12} className="px-3 py-4 text-zinc-500 text-center">
+              <td colSpan={13} className="px-3 py-4 text-zinc-500 text-center">
                 Loading trades...
               </td>
             </tr>
           ) : trades.length === 0 ? (
             <tr>
-              <td colSpan={12} className="px-3 py-4 text-zinc-600 text-center">
+              <td colSpan={13} className="px-3 py-4 text-zinc-600 text-center">
                 No trades yet
               </td>
             </tr>
@@ -84,7 +101,7 @@ function TradeTable({ trades, loading }: { trades: Trade[]; loading: boolean }) 
                     const deselecting = selectedTradeId === trade.id;
                     setSelectedTradeId(deselecting ? null : trade.id);
                     setSelectedTrade(deselecting ? null : trade);
-                    if (!deselecting) setSelectedTicker(trade.symbol);
+                    if (!deselecting && trade.symbol !== useAppStore.getState().selectedTicker) setSelectedTicker(trade.symbol);
                   }}
                   className={clsx(
                     "text-zinc-300 cursor-pointer transition-colors",
@@ -164,6 +181,16 @@ function TradeTable({ trades, loading }: { trades: Trade[]; loading: boolean }) 
                   </td>
                   <td className="px-2 py-1.5 text-xs text-zinc-400 truncate">
                     {trade.reason}
+                  </td>
+                  <td className="px-1 py-1.5 text-center">
+                    {(() => {
+                      const ex = formatExitReason(trade.exit_reason);
+                      return (
+                        <span className={clsx("text-[10px] font-medium", ex.cls)}>
+                          {ex.label}
+                        </span>
+                      );
+                    })()}
                   </td>
                   <td className="px-2 py-1.5 text-center">
                     <span

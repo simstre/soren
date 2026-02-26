@@ -73,7 +73,7 @@ export function Sidebar() {
   const handleScanFitness = async () => {
     useAppStore.setState({ scanning: true });
     try {
-      const results = await api.scanFitness(3);
+      const results = await api.scanFitness(10);
       const tickers = results.map((r) => r.symbol);
       setTradingTickers(tickers);
     } catch {
@@ -98,17 +98,12 @@ export function Sidebar() {
           disabled={scanning}
           className={clsx(
             "w-full flex items-center justify-center gap-2 py-2 rounded-lg font-medium text-sm transition-all",
-            scanning
-              ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 animate-pulse cursor-wait"
-              : "bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 border border-cyan-500/20"
+            "bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 border border-cyan-500/20",
+            scanning && "opacity-50 cursor-not-allowed"
           )}
         >
-          {scanning ? (
-            <Loader2 size={14} className="animate-spin" />
-          ) : (
-            <ScanLine size={14} />
-          )}
-          {scanning ? "Scanning Market..." : "Scan for Best Tickers"}
+          <ScanLine size={14} />
+          Scan for Best Tickers
         </button>
       </div>
 

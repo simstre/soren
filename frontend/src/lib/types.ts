@@ -12,6 +12,7 @@ export interface Trade {
   pnl: number | null;
   pnl_pct: number | null;
   reason: string;
+  exit_reason?: string;
   status: "OPEN" | "CLOSED" | "CANCELLED";
   ib_order_id: string | null;
   signal_id: number | null;

@@ -45,6 +45,7 @@ class TimeframeParams:
     atr_stop_mult: float      # 2.0 (all)
     atr_target_mult: float    # 3.0 (all)
     use_time_filters: bool    # True for intraday, False for 1D
+    entry_cutoff_hour: int    # 14 for intraday (2 PM), 24 for daily (disabled)
 
 
 def get_timeframe_params(timeframe: str) -> TimeframeParams:
@@ -72,6 +73,7 @@ def get_timeframe_params(timeframe: str) -> TimeframeParams:
         atr_stop_mult=2.0,
         atr_target_mult=3.0,
         use_time_filters=not is_daily,
+        entry_cutoff_hour=24 if is_daily else 14,
     )
 
 
@@ -234,7 +236,7 @@ def _detect_sr_factors(
             factors.append(_SRFactor(
                 side="BUY",
                 confidence=base_conf,
-                reason=f"Support ${level.price:.2f} ({level.touch_count}T, str {level.strength:.1f})",
+                reason=f"Sup ${level.price:.2f} ({level.touch_count}T)",
                 target=target,
                 stop=stop,
                 sr_strength=level.strength,
@@ -252,7 +254,7 @@ def _detect_sr_factors(
             factors.append(_SRFactor(
                 side="SELL",
                 confidence=base_conf,
-                reason=f"Resistance ${level.price:.2f} ({level.touch_count}T, str {level.strength:.1f})",
+                reason=f"Res ${level.price:.2f} ({level.touch_count}T)",
                 target=target,
                 stop=stop,
                 sr_strength=level.strength,
@@ -810,8 +812,7 @@ def generate_signals_refined_rsi(
     # --- Filter 2: No late-day entries (intraday only) ---
     if tf_params.use_time_filters and current_timestamp is not None:
         hour = current_timestamp.hour if hasattr(current_timestamp, "hour") else 12
-        minute = current_timestamp.minute if hasattr(current_timestamp, "minute") else 0
-        if hour == 15 and minute >= 30:
+        if hour >= tf_params.entry_cutoff_hour:
             return []
 
     rsi_val = analysis.rsi_current
@@ -888,7 +889,7 @@ def generate_signals_refined_rsi(
 
     reason = (
         f"[{_setup_grade}] {best_sr.reason} + {best_divergence.description} ({best_divergence.timeframe}) "
-        f"[spread={best_divergence.rsi_spread:.0f}] [refined-v9-{tf_params.timeframe}]"
+        f"[sp={best_divergence.rsi_spread:.0f}] [v1-{tf_params.timeframe}]"
     )
 
     return [
@@ -945,8 +946,7 @@ def generate_signals_refined_rsi_v2(
     # --- Filter 2: No late-day entries ---
     if tf_params.use_time_filters and current_timestamp is not None:
         hour = current_timestamp.hour if hasattr(current_timestamp, "hour") else 12
-        minute = current_timestamp.minute if hasattr(current_timestamp, "minute") else 0
-        if hour == 15 and minute >= 30:
+        if hour >= tf_params.entry_cutoff_hour:
             return []
 
     rsi_val = analysis.rsi_current
@@ -1026,7 +1026,7 @@ def generate_signals_refined_rsi_v2(
 
     reason = (
         f"[{setup_grade}] {best_sr.reason} + {best_divergence.description} ({best_divergence.timeframe}) "
-        f"[spread={best_divergence.rsi_spread:.0f}] [refined-v2-{tf_params.timeframe}]"
+        f"[sp={best_divergence.rsi_spread:.0f}] [v2-{tf_params.timeframe}]"
     )
 
     return [
@@ -1085,8 +1085,7 @@ def generate_signals_refined_rsi_v3(
     if tf_params.use_time_filters and current_timestamp is not None:
         hour = current_timestamp.hour if hasattr(current_timestamp, "hour") else 12
         minute = current_timestamp.minute if hasattr(current_timestamp, "minute") else 0
-        # Skip last 30 min
-        if hour == 15 and minute >= 30:
+        if hour >= tf_params.entry_cutoff_hour:
             return []
         # Skip first 15 min after open
         if hour == 9 and minute < 45:
@@ -1175,7 +1174,7 @@ def generate_signals_refined_rsi_v3(
 
     reason = (
         f"[{_setup_grade}] {best_sr.reason} + {best_divergence.description} ({best_divergence.timeframe}) "
-        f"[spread={best_divergence.rsi_spread:.0f}] [refined-v3-{tf_params.timeframe}]"
+        f"[sp={best_divergence.rsi_spread:.0f}] [v3-{tf_params.timeframe}]"
     )
 
     return [
@@ -1229,11 +1228,7 @@ def generate_signals_refined_rsi_v4(
     # --- Filter 2: Time filters ---
     if tf_params.use_time_filters and current_timestamp is not None:
         hour = current_timestamp.hour if hasattr(current_timestamp, "hour") else 12
-        minute = current_timestamp.minute if hasattr(current_timestamp, "minute") else 0
-        if hour == 15 and minute >= 30:
-            return []
-        # Skip hour 14 (2pm-3pm) — bear-market losing hour
-        if hour == 14:
+        if hour >= tf_params.entry_cutoff_hour:
             return []
 
     rsi_val = analysis.rsi_current
@@ -1310,7 +1305,7 @@ def generate_signals_refined_rsi_v4(
 
     reason = (
         f"[{_setup_grade}] {best_sr.reason} + {best_divergence.description} ({best_divergence.timeframe}) "
-        f"[spread={best_divergence.rsi_spread:.0f}] [refined-v4-{tf_params.timeframe}]"
+        f"[sp={best_divergence.rsi_spread:.0f}] [v4-{tf_params.timeframe}]"
     )
 
     return [
@@ -1360,8 +1355,7 @@ def generate_signals_refined_rsi_v5(
 
     if tf_params.use_time_filters and current_timestamp is not None:
         hour = current_timestamp.hour if hasattr(current_timestamp, "hour") else 12
-        minute = current_timestamp.minute if hasattr(current_timestamp, "minute") else 0
-        if hour == 15 and minute >= 30:
+        if hour >= tf_params.entry_cutoff_hour:
             return []
 
     rsi_val = analysis.rsi_current
@@ -1432,7 +1426,7 @@ def generate_signals_refined_rsi_v5(
 
     reason = (
         f"[{_setup_grade}] {best_sr.reason} + {best_divergence.description} ({best_divergence.timeframe}) "
-        f"[spread={best_divergence.rsi_spread:.0f}] [refined-v5-{tf_params.timeframe}]"
+        f"[sp={best_divergence.rsi_spread:.0f}] [v5-{tf_params.timeframe}]"
     )
 
     return [
@@ -1460,13 +1454,14 @@ def check_exit_refined_rsi(
     entry_time: datetime | None = None,
     current_time: datetime | None = None,
     tf_params: "TimeframeParams | None" = None,
-) -> bool:
+) -> str | None:
     """Exit logic for refined RSI strategy.
 
+    Returns the exit reason string if an exit is triggered, or ``None``
+    to keep the position open.  Possible values: ``"max_hold"``,
+    ``"eod_close"``, ``"reversal"``.
+
     Timeframe-adaptive via ``tf_params``.
-    1. Max hold (tf_params.max_hold_minutes)
-    2. Force exit before close (15:50) — intraday only
-    3. RSI reversal detection (momentum shift)
     """
     if tf_params is None:
         tf_params = get_timeframe_params("5m")
@@ -1475,14 +1470,14 @@ def check_exit_refined_rsi(
         held_minutes = (current_time - entry_time).total_seconds() / 60
 
         if held_minutes >= tf_params.max_hold_minutes:
-            return True
+            return "max_hold"
 
         # Force exit before market close (intraday only)
         if tf_params.use_time_filters:
             hour = current_time.hour if hasattr(current_time, "hour") else 12
             minute = current_time.minute if hasattr(current_time, "minute") else 0
             if hour == 15 and minute >= 50:
-                return True
+                return "eod_close"
 
     # RSI reversal: momentum fading against position
     rsi_val = analysis.rsi_current
@@ -1491,12 +1486,186 @@ def check_exit_refined_rsi(
         if len(analysis.rsi_values) >= 3:
             r = analysis.rsi_values
             if r[-1] < r[-2] < r[-3]:
-                return True
+                return "reversal"
 
     if current_side == "SELL" and rsi_val < 35:
         if len(analysis.rsi_values) >= 3:
             r = analysis.rsi_values
             if r[-1] > r[-2] > r[-3]:
-                return True
+                return "reversal"
 
-    return False
+    return None
+
+
+# ---------------------------------------------------------------------------
+# v6 — Contrarian wrapper: flips v1 signals (BUY↔SELL) with mirrored stops/targets
+# ---------------------------------------------------------------------------
+
+def generate_signals_refined_rsi_v6(
+    analysis: AnalysisResult,
+    df: pd.DataFrame,
+    stop_loss_pct: float | None = None,
+    best_divergence: "DivergenceSignal | None" = None,
+    current_timestamp: "datetime | None" = None,
+    tf_params: "TimeframeParams | None" = None,
+) -> list[TradingSignal]:
+    """Contrarian strategy — takes the opposite side of v1's signals.
+
+    If v1 says BUY, v6 says SELL (and vice versa), with stop/target
+    prices mirrored around the entry price.
+    """
+    signals = generate_signals_refined_rsi(
+        analysis, df,
+        stop_loss_pct=stop_loss_pct,
+        best_divergence=best_divergence,
+        current_timestamp=current_timestamp,
+        tf_params=tf_params,
+    )
+    if not signals:
+        return []
+
+    flipped: list[TradingSignal] = []
+    for sig in signals:
+        price = sig.entry_price
+        # Mirror stop and target around the entry price
+        stop_dist = abs(price - sig.stop_loss)
+        target_dist = abs(sig.profit_target - price)
+
+        if sig.signal_type == "BUY":
+            new_side = "SELL"
+            new_stop = round(price + stop_dist, 2)
+            new_target = round(price - target_dist, 2)
+        else:
+            new_side = "BUY"
+            new_stop = round(price - stop_dist, 2)
+            new_target = round(price + target_dist, 2)
+
+        flipped.append(
+            TradingSignal(
+                symbol=sig.symbol,
+                signal_type=new_side,
+                entry_price=price,
+                stop_loss=new_stop,
+                profit_target=new_target,
+                reason=f"[CONTRA] {sig.reason}",
+                pattern_type="refined_rsi_v6",
+                confidence=sig.confidence,
+                created_at=sig.created_at,
+                has_rsi_divergence=sig.has_rsi_divergence,
+                sr_strength=sig.sr_strength,
+                divergence_timeframe=sig.divergence_timeframe,
+            )
+        )
+    return flipped
+
+
+# ---------------------------------------------------------------------------
+# v7 — Self-contained contrarian momentum: flips v1 signals with own ATR mults
+# ---------------------------------------------------------------------------
+
+_V7_ATR_STOP_MULT = 1.5   # tighter than v1's 2.0x — cut losers faster
+_V7_ATR_TARGET_MULT = 5.0  # wider than v1's 3.0x — let winners run
+
+
+def generate_signals_refined_rsi_v7(
+    analysis: AnalysisResult,
+    df: pd.DataFrame,
+    stop_loss_pct: float | None = None,
+    best_divergence: "DivergenceSignal | None" = None,
+    current_timestamp: "datetime | None" = None,
+    tf_params: "TimeframeParams | None" = None,
+) -> list[TradingSignal]:
+    """Contrarian momentum — flips v1's signals with hardcoded 1.5x/5.0x ATR.
+
+    Reuses v1's entry filters (divergence, RSI bands, S/R, grading) but
+    trades the opposite direction.  Stops and targets are computed directly
+    from ATR with v7's own multipliers instead of mirroring v1's distances.
+    """
+    signals = generate_signals_refined_rsi(
+        analysis, df,
+        stop_loss_pct=stop_loss_pct,
+        best_divergence=best_divergence,
+        current_timestamp=current_timestamp,
+        tf_params=tf_params,
+    )
+    if not signals:
+        return []
+
+    atr_series = calc_atr(df, period=14)
+    atr_val = atr_series.iloc[-1]
+
+    flipped: list[TradingSignal] = []
+    for sig in signals:
+        price = sig.entry_price
+        new_side = "SELL" if sig.signal_type == "BUY" else "BUY"
+
+        # Compute stop from ATR with v7 multipliers
+        if stop_loss_pct is not None and stop_loss_pct > 0:
+            atr_stop_dist = atr_val * _V7_ATR_STOP_MULT if not pd.isna(atr_val) else price * stop_loss_pct
+            fixed_stop_dist = price * stop_loss_pct
+            stop_dist = min(atr_stop_dist, fixed_stop_dist)
+        elif not pd.isna(atr_val):
+            stop_dist = atr_val * _V7_ATR_STOP_MULT
+        else:
+            stop_dist = price * 0.02
+
+        # Compute target from ATR with v7 multipliers
+        if not pd.isna(atr_val):
+            target_dist = atr_val * _V7_ATR_TARGET_MULT
+        else:
+            target_dist = price * 0.01
+
+        if new_side == "BUY":
+            new_stop = round(price - stop_dist, 2)
+            new_target = round(price + target_dist, 2)
+        else:
+            new_stop = round(price + stop_dist, 2)
+            new_target = round(price - target_dist, 2)
+
+        flipped.append(
+            TradingSignal(
+                symbol=sig.symbol,
+                signal_type=new_side,
+                entry_price=price,
+                stop_loss=new_stop,
+                profit_target=new_target,
+                reason=f"[v7-CONTRA] {sig.reason}",
+                pattern_type="refined_rsi_v7",
+                confidence=sig.confidence,
+                created_at=sig.created_at,
+                has_rsi_divergence=sig.has_rsi_divergence,
+                sr_strength=sig.sr_strength,
+                divergence_timeframe=sig.divergence_timeframe,
+            )
+        )
+    return flipped
+
+
+def check_exit_refined_rsi_v6(
+    analysis: AnalysisResult,
+    df: pd.DataFrame,
+    current_side: str,
+    entry_time: datetime | None = None,
+    current_time: datetime | None = None,
+    tf_params: "TimeframeParams | None" = None,
+) -> str | None:
+    """Exit logic for contrarian v6 — time-based only, no RSI reversal.
+
+    Relies purely on broker stop/target exits.  Only forces out on
+    ``max_hold`` or ``eod_close``.
+    """
+    if tf_params is None:
+        tf_params = get_timeframe_params("5m")
+
+    if entry_time is not None and current_time is not None:
+        held_minutes = (current_time - entry_time).total_seconds() / 60
+        if held_minutes >= tf_params.max_hold_minutes:
+            return "max_hold"
+
+        if tf_params.use_time_filters:
+            hour = current_time.hour if hasattr(current_time, "hour") else 12
+            minute = current_time.minute if hasattr(current_time, "minute") else 0
+            if hour == 15 and minute >= 50:
+                return "eod_close"
+
+    return None

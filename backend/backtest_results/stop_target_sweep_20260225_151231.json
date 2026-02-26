@@ -1,0 +1,387 @@
+[
+  {
+    "stop_mult": 0.5,
+    "target_mult": 2.0,
+    "trades": 69,
+    "wr": 21.7,
+    "pnl": -28.63,
+    "pnl_pct": -0.03,
+    "dd": 0.23,
+    "long_wr": 23.3,
+    "short_wr": 20.5,
+    "long_pnl": -4.54,
+    "short_pnl": -24.09,
+    "exit_reasons": {
+      "profit_target": 15,
+      "stop_loss": 54
+    },
+    "gated": 9
+  },
+  {
+    "stop_mult": 0.5,
+    "target_mult": 3.0,
+    "trades": 47,
+    "wr": 8.5,
+    "pnl": -217.14,
+    "pnl_pct": -0.22,
+    "dd": 0.32,
+    "long_wr": 11.1,
+    "short_wr": 6.9,
+    "long_pnl": -110.52,
+    "short_pnl": -106.62,
+    "exit_reasons": {
+      "stop_loss": 43,
+      "profit_target": 3,
+      "reversal": 1
+    },
+    "gated": 10
+  },
+  {
+    "stop_mult": 0.5,
+    "target_mult": 4.0,
+    "trades": 47,
+    "wr": 8.5,
+    "pnl": -171.46,
+    "pnl_pct": -0.17,
+    "dd": 0.35,
+    "long_wr": 11.1,
+    "short_wr": 6.9,
+    "long_pnl": -103.26,
+    "short_pnl": -68.2,
+    "exit_reasons": {
+      "stop_loss": 43,
+      "profit_target": 3,
+      "reversal": 1
+    },
+    "gated": 10
+  },
+  {
+    "stop_mult": 0.5,
+    "target_mult": 5.0,
+    "trades": 43,
+    "wr": 7.0,
+    "pnl": -161.52,
+    "pnl_pct": -0.16,
+    "dd": 0.41,
+    "long_wr": 12.5,
+    "short_wr": 3.7,
+    "long_pnl": -65.92,
+    "short_pnl": -95.6,
+    "exit_reasons": {
+      "stop_loss": 40,
+      "profit_target": 1,
+      "reversal": 2
+    },
+    "gated": 10
+  },
+  {
+    "stop_mult": 0.75,
+    "target_mult": 2.0,
+    "trades": 111,
+    "wr": 29.7,
+    "pnl": -31.76,
+    "pnl_pct": -0.03,
+    "dd": 0.32,
+    "long_wr": 34.0,
+    "short_wr": 26.2,
+    "long_pnl": 80.33,
+    "short_pnl": -112.09,
+    "exit_reasons": {
+      "profit_target": 32,
+      "stop_loss": 78,
+      "reversal": 1
+    },
+    "gated": 7
+  },
+  {
+    "stop_mult": 0.75,
+    "target_mult": 3.0,
+    "trades": 49,
+    "wr": 12.2,
+    "pnl": -327.35,
+    "pnl_pct": -0.33,
+    "dd": 0.45,
+    "long_wr": 16.7,
+    "short_wr": 9.7,
+    "long_pnl": -104.55,
+    "short_pnl": -222.8,
+    "exit_reasons": {
+      "stop_loss": 43,
+      "profit_target": 4,
+      "reversal": 2
+    },
+    "gated": 10
+  },
+  {
+    "stop_mult": 0.75,
+    "target_mult": 4.0,
+    "trades": 49,
+    "wr": 12.2,
+    "pnl": -270.45,
+    "pnl_pct": -0.27,
+    "dd": 0.46,
+    "long_wr": 16.7,
+    "short_wr": 9.7,
+    "long_pnl": -86.07,
+    "short_pnl": -184.38,
+    "exit_reasons": {
+      "stop_loss": 43,
+      "profit_target": 4,
+      "reversal": 2
+    },
+    "gated": 10
+  },
+  {
+    "stop_mult": 0.75,
+    "target_mult": 5.0,
+    "trades": 48,
+    "wr": 10.4,
+    "pnl": -294.89,
+    "pnl_pct": -0.29,
+    "dd": 0.52,
+    "long_wr": 16.7,
+    "short_wr": 6.7,
+    "long_pnl": -81.59,
+    "short_pnl": -213.3,
+    "exit_reasons": {
+      "stop_loss": 43,
+      "reversal": 4,
+      "profit_target": 1
+    },
+    "gated": 10
+  },
+  {
+    "stop_mult": 1.0,
+    "target_mult": 2.0,
+    "trades": 119,
+    "wr": 35.3,
+    "pnl": -170.05,
+    "pnl_pct": -0.17,
+    "dd": 0.45,
+    "long_wr": 38.2,
+    "short_wr": 32.8,
+    "long_pnl": 13.39,
+    "short_pnl": -183.44,
+    "exit_reasons": {
+      "profit_target": 40,
+      "stop_loss": 77,
+      "reversal": 2
+    },
+    "gated": 6
+  },
+  {
+    "stop_mult": 1.0,
+    "target_mult": 3.0,
+    "trades": 80,
+    "wr": 22.5,
+    "pnl": -326.95,
+    "pnl_pct": -0.33,
+    "dd": 0.55,
+    "long_wr": 30.6,
+    "short_wr": 15.9,
+    "long_pnl": 27.0,
+    "short_pnl": -353.95,
+    "exit_reasons": {
+      "stop_loss": 62,
+      "profit_target": 14,
+      "reversal": 4
+    },
+    "gated": 8
+  },
+  {
+    "stop_mult": 1.0,
+    "target_mult": 4.0,
+    "trades": 80,
+    "wr": 21.2,
+    "pnl": -205.99,
+    "pnl_pct": -0.21,
+    "dd": 0.57,
+    "long_wr": 30.6,
+    "short_wr": 13.6,
+    "long_pnl": 116.49,
+    "short_pnl": -322.48,
+    "exit_reasons": {
+      "stop_loss": 63,
+      "profit_target": 11,
+      "reversal": 6
+    },
+    "gated": 8
+  },
+  {
+    "stop_mult": 1.0,
+    "target_mult": 5.0,
+    "trades": 78,
+    "wr": 20.5,
+    "pnl": -181.5,
+    "pnl_pct": -0.18,
+    "dd": 0.62,
+    "long_wr": 30.6,
+    "short_wr": 11.9,
+    "long_pnl": 155.09,
+    "short_pnl": -336.59,
+    "exit_reasons": {
+      "stop_loss": 62,
+      "profit_target": 5,
+      "reversal": 11
+    },
+    "gated": 8
+  },
+  {
+    "stop_mult": 1.5,
+    "target_mult": 2.0,
+    "trades": 179,
+    "wr": 48.0,
+    "pnl": 16.06,
+    "pnl_pct": 0.02,
+    "dd": 0.52,
+    "long_wr": 50.6,
+    "short_wr": 45.7,
+    "long_pnl": 243.8,
+    "short_pnl": -227.74,
+    "exit_reasons": {
+      "profit_target": 84,
+      "stop_loss": 93,
+      "reversal": 2
+    },
+    "gated": 3
+  },
+  {
+    "stop_mult": 1.5,
+    "target_mult": 3.0,
+    "trades": 134,
+    "wr": 38.1,
+    "pnl": -129.07,
+    "pnl_pct": -0.13,
+    "dd": 0.62,
+    "long_wr": 41.9,
+    "short_wr": 34.7,
+    "long_pnl": 188.9,
+    "short_pnl": -317.97,
+    "exit_reasons": {
+      "stop_loss": 83,
+      "profit_target": 43,
+      "reversal": 6,
+      "max_hold": 2
+    },
+    "gated": 5
+  },
+  {
+    "stop_mult": 1.5,
+    "target_mult": 4.0,
+    "trades": 132,
+    "wr": 34.1,
+    "pnl": -62.99,
+    "pnl_pct": -0.06,
+    "dd": 0.78,
+    "long_wr": 39.3,
+    "short_wr": 29.6,
+    "long_pnl": 194.31,
+    "short_pnl": -257.3,
+    "exit_reasons": {
+      "stop_loss": 87,
+      "profit_target": 32,
+      "reversal": 10,
+      "max_hold": 3
+    },
+    "gated": 5
+  },
+  {
+    "stop_mult": 1.5,
+    "target_mult": 5.0,
+    "trades": 106,
+    "wr": 27.4,
+    "pnl": -288.73,
+    "pnl_pct": -0.29,
+    "dd": 0.79,
+    "long_wr": 33.3,
+    "short_wr": 21.8,
+    "long_pnl": 76.19,
+    "short_pnl": -364.92,
+    "exit_reasons": {
+      "stop_loss": 77,
+      "profit_target": 13,
+      "reversal": 14,
+      "max_hold": 2
+    },
+    "gated": 7
+  },
+  {
+    "stop_mult": 2.0,
+    "target_mult": 2.0,
+    "trades": 192,
+    "wr": 56.8,
+    "pnl": 176.79,
+    "pnl_pct": 0.18,
+    "dd": 0.7,
+    "long_wr": 58.2,
+    "short_wr": 55.4,
+    "long_pnl": 362.05,
+    "short_pnl": -185.26,
+    "exit_reasons": {
+      "profit_target": 105,
+      "stop_loss": 83,
+      "reversal": 4
+    },
+    "gated": 2
+  },
+  {
+    "stop_mult": 2.0,
+    "target_mult": 3.0,
+    "trades": 133,
+    "wr": 43.6,
+    "pnl": -479.78,
+    "pnl_pct": -0.48,
+    "dd": 0.8,
+    "long_wr": 47.5,
+    "short_wr": 40.3,
+    "long_pnl": 60.22,
+    "short_pnl": -540.0,
+    "exit_reasons": {
+      "stop_loss": 75,
+      "profit_target": 47,
+      "reversal": 9,
+      "max_hold": 2
+    },
+    "gated": 5
+  },
+  {
+    "stop_mult": 2.0,
+    "target_mult": 4.0,
+    "trades": 125,
+    "wr": 37.6,
+    "pnl": -507.02,
+    "pnl_pct": -0.51,
+    "dd": 0.98,
+    "long_wr": 44.1,
+    "short_wr": 31.8,
+    "long_pnl": 60.82,
+    "short_pnl": -567.84,
+    "exit_reasons": {
+      "stop_loss": 78,
+      "profit_target": 33,
+      "reversal": 11,
+      "max_hold": 3
+    },
+    "gated": 6
+  },
+  {
+    "stop_mult": 2.0,
+    "target_mult": 5.0,
+    "trades": 110,
+    "wr": 31.8,
+    "pnl": -665.57,
+    "pnl_pct": -0.67,
+    "dd": 0.99,
+    "long_wr": 39.6,
+    "short_wr": 24.6,
+    "long_pnl": -29.97,
+    "short_pnl": -635.6,
+    "exit_reasons": {
+      "stop_loss": 75,
+      "profit_target": 18,
+      "reversal": 15,
+      "max_hold": 2
+    },
+    "gated": 7
+  }
+]

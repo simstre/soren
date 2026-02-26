@@ -21,6 +21,7 @@ import structlog
 from app.analysis.indicators import atr as calc_atr, rsi as calc_rsi
 from app.analysis.support_resistance import detect_sr_levels
 from app.engine.signal_generator import detect_rsi_divergence
+from app.engine.strategies import ScanConfig
 
 logger = structlog.get_logger()
 
@@ -171,18 +172,21 @@ async def _phase1_daily_filter(
 # Phase 2: Mini-backtest on 1m data
 # ---------------------------------------------------------------------------
 
-def _simulate_signals_on_1m(df: pd.DataFrame) -> tuple[int, int, float, int]:
+def _simulate_signals_on_1m(df: pd.DataFrame, scan_config: ScanConfig | None = None) -> tuple[int, int, float, int]:
     """Simulate mini-trades for each valid strategy setup on 1m data.
 
     For each setup (divergence + matching S/R + RSI in band):
     - Entry at current close
-    - Stop = 2x ATR(14) against the trade
-    - Target = 3x ATR(14) in trade direction
+    - Stop = atr_stop_mult × ATR(14) against the trade
+    - Target = atr_target_mult × ATR(14) in trade direction
     - Walk forward bar-by-bar, see which is hit first
-    - If neither hit within 120 bars, close at current price
+    - If neither hit within max_hold_bars, close at current price
 
     Returns (num_setups, wins, total_pnl_pct, sr_strong_count).
     """
+    if scan_config is None:
+        scan_config = ScanConfig()
+
     if len(df) < 40:
         return 0, 0, 0.0, 0
 
@@ -196,7 +200,7 @@ def _simulate_signals_on_1m(df: pd.DataFrame) -> tuple[int, int, float, int]:
 
     # Detect S/R levels
     sr_levels = detect_sr_levels(df)
-    sr_strong = [lvl for lvl in sr_levels if lvl.strength >= 5]
+    sr_strong = [lvl for lvl in sr_levels if lvl.strength >= scan_config.sr_min_strength]
     sr_strong_count = len(sr_strong)
 
     supports = [lvl for lvl in sr_strong if lvl.level_type == "support"]
@@ -207,7 +211,6 @@ def _simulate_signals_on_1m(df: pd.DataFrame) -> tuple[int, int, float, int]:
     total_pnl_pct = 0.0
     window_size = 20
     step = 5
-    max_hold = 120  # bars
     cooldown = 0  # skip N bars after a trade
 
     for i in range(window_size, len(closes) - 1, step):
@@ -223,8 +226,13 @@ def _simulate_signals_on_1m(df: pd.DataFrame) -> tuple[int, int, float, int]:
             continue
 
         div = detect_rsi_divergence(window_rsi, window_prices, lookback=window_size)
-        if div is None or div.rsi_spread < 7:
+        if div is None or div.rsi_spread < scan_config.min_rsi_spread:
             continue
+
+        # Flip signals for contrarian strategies
+        direction = div.direction
+        if scan_config.flip_signals:
+            direction = "bearish" if direction == "bullish" else "bullish"
 
         current_rsi = window_rsi[-1]
         entry_price = closes[i]
@@ -235,15 +243,15 @@ def _simulate_signals_on_1m(df: pd.DataFrame) -> tuple[int, int, float, int]:
             continue
 
         # RSI band filter
-        if div.direction == "bullish":
-            if not (30 <= current_rsi < 42):
+        if direction == "bullish":
+            if not (scan_config.rsi_buy_lo <= current_rsi < scan_config.rsi_buy_hi):
                 continue
         else:
-            if not (58 < current_rsi <= 70):
+            if not (scan_config.rsi_sell_lo < current_rsi <= scan_config.rsi_sell_hi):
                 continue
 
         # Direction-matched S/R proximity
-        levels_to_check = supports if div.direction == "bullish" else resistances
+        levels_to_check = supports if direction == "bullish" else resistances
         near_sr = False
         for lvl in levels_to_check:
             dist_pct = abs(entry_price - lvl.price) / entry_price * 100
@@ -256,10 +264,10 @@ def _simulate_signals_on_1m(df: pd.DataFrame) -> tuple[int, int, float, int]:
 
         # Valid setup — simulate the trade
         num_setups += 1
-        stop_dist = atr_val * 2.0
-        target_dist = atr_val * 3.0
+        stop_dist = atr_val * scan_config.atr_stop_mult
+        target_dist = atr_val * scan_config.atr_target_mult
 
-        if div.direction == "bullish":
+        if direction == "bullish":
             stop = entry_price - stop_dist
             target = entry_price + target_dist
         else:
@@ -268,11 +276,11 @@ def _simulate_signals_on_1m(df: pd.DataFrame) -> tuple[int, int, float, int]:
 
         # Walk forward bar-by-bar
         exit_price = entry_price
-        for j in range(i + 1, min(i + 1 + max_hold, len(closes))):
+        for j in range(i + 1, min(i + 1 + scan_config.max_hold_bars, len(closes))):
             bar_high = highs[j]
             bar_low = lows[j]
 
-            if div.direction == "bullish":
+            if direction == "bullish":
                 if bar_low <= stop:
                     exit_price = stop
                     break
@@ -289,7 +297,7 @@ def _simulate_signals_on_1m(df: pd.DataFrame) -> tuple[int, int, float, int]:
             exit_price = closes[j]
 
         # Calculate P&L
-        if div.direction == "bullish":
+        if direction == "bullish":
             pnl_pct = (exit_price - entry_price) / entry_price * 100
         else:
             pnl_pct = (entry_price - exit_price) / entry_price * 100
@@ -298,8 +306,7 @@ def _simulate_signals_on_1m(df: pd.DataFrame) -> tuple[int, int, float, int]:
         if pnl_pct > 0:
             wins += 1
 
-        # Cooldown after trade (30 bars = same as strategy)
-        cooldown = 30
+        cooldown = scan_config.cooldown_bars
 
     return num_setups, wins, total_pnl_pct, sr_strong_count
 
@@ -309,6 +316,7 @@ async def _score_ticker(
     price: float,
     avg_volume: int,
     atr_pct: float,
+    scan_config: ScanConfig | None = None,
 ) -> FitnessScore:
     """Fetch 7 days of 1m data, simulate mini-trades, score on quality."""
     try:
@@ -326,7 +334,7 @@ async def _score_ticker(
         df.columns = [c.lower() for c in df.columns]
 
         # Simulate trades on 1m data
-        num_setups, wins, total_pnl_pct, sr_strong_count = _simulate_signals_on_1m(df)
+        num_setups, wins, total_pnl_pct, sr_strong_count = _simulate_signals_on_1m(df, scan_config)
 
         win_rate = wins / num_setups if num_setups > 0 else 0
         avg_pnl = total_pnl_pct / num_setups if num_setups > 0 else 0
@@ -374,18 +382,19 @@ async def _score_ticker(
 # Public API
 # ---------------------------------------------------------------------------
 
-async def score_ticker(symbol: str, bars: int = 60) -> FitnessScore:
+async def score_ticker(symbol: str, bars: int = 60, scan_config: ScanConfig | None = None) -> FitnessScore:
     """Score a single ticker through both phases."""
     candidates = await _phase1_daily_filter([symbol], top_n=1)
     if not candidates:
         return _empty_score(symbol, "failed Phase 1 filter")
     sym, price, avg_volume, atr_pct = candidates[0]
-    return await _score_ticker(sym, price, avg_volume, atr_pct)
+    return await _score_ticker(sym, price, avg_volume, atr_pct, scan_config)
 
 
 async def run_fitness_scan(
     universe: list[str] | None = None,
     top_n: int = 15,
+    scan_config: ScanConfig | None = None,
 ) -> list[FitnessScore]:
     """Two-phase fitness scan: daily filter → 1m mini-backtest."""
     if universe is None:
@@ -401,7 +410,7 @@ async def run_fitness_scan(
 
     scores: list[FitnessScore] = []
     for sym, price, avg_volume, atr_pct in candidates:
-        score = await _score_ticker(sym, price, avg_volume, atr_pct)
+        score = await _score_ticker(sym, price, avg_volume, atr_pct, scan_config)
         scores.append(score)
 
     qualified = [s for s in scores if not s.disqualified]

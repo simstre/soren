@@ -31,6 +31,9 @@ from app.engine.signal_generator import (
     check_exit_vwap,
     check_exit_exhaustion,
     check_exit_refined_rsi,
+    generate_signals_refined_rsi_v6,
+    generate_signals_refined_rsi_v7,
+    check_exit_refined_rsi_v6,
     TimeframeParams,
     get_timeframe_params,
 )
@@ -243,7 +246,7 @@ class ReplayEngine:
         self._div_dataframes = {}
         self._trackers = {}
 
-        if self._strategy in ("rsi_divergence_sr", "refined_rsi", "refined_rsi_v2", "refined_rsi_v3", "refined_rsi_v4", "refined_rsi_v5"):
+        if self._strategy in ("rsi_divergence_sr", "refined_rsi", "refined_rsi_v2", "refined_rsi_v3", "refined_rsi_v4", "refined_rsi_v5", "refined_rsi_v6", "refined_rsi_v7"):
             candidates = CANDIDATE_TIMEFRAMES.get(timeframe, [timeframe])
             active_tfs = list(CANDIDATE_TIMEFRAMES.get(timeframe, [timeframe]))
             for sym in symbol_dataframes:
@@ -748,11 +751,11 @@ class ReplayEngine:
 
             # Divergence
             best_div = None
-            if self._strategy in ("rsi_divergence_sr", "refined_rsi", "refined_rsi_v2", "refined_rsi_v3", "refined_rsi_v4", "refined_rsi_v5"):
+            if self._strategy in ("rsi_divergence_sr", "refined_rsi", "refined_rsi_v2", "refined_rsi_v3", "refined_rsi_v4", "refined_rsi_v5", "refined_rsi_v6", "refined_rsi_v7"):
                 best_div = self._scan_divergences(symbol, timestamp)
 
             # Suppress during cooldown
-            if self._cooldown_bars.get(symbol, 0) > 0 and self._strategy in ("refined_rsi", "refined_rsi_v2", "refined_rsi_v3", "refined_rsi_v4", "refined_rsi_v5"):
+            if self._cooldown_bars.get(symbol, 0) > 0 and self._strategy in ("refined_rsi", "refined_rsi_v2", "refined_rsi_v3", "refined_rsi_v4", "refined_rsi_v5", "refined_rsi_v7"):
                 best_div = None
 
             # Strategy dispatch
@@ -812,6 +815,22 @@ class ReplayEngine:
                     current_timestamp=timestamp,
                     tf_params=self._tf_params,
                 )
+            elif self._strategy == "refined_rsi_v6":
+                signals = generate_signals_refined_rsi_v6(
+                    analysis, df,
+                    stop_loss_pct=self._stop_loss_pct,
+                    best_divergence=best_div,
+                    current_timestamp=timestamp,
+                    tf_params=self._tf_params,
+                )
+            elif self._strategy == "refined_rsi_v7":
+                signals = generate_signals_refined_rsi_v7(
+                    analysis, df,
+                    stop_loss_pct=self._stop_loss_pct,
+                    best_divergence=best_div,
+                    current_timestamp=timestamp,
+                    tf_params=self._tf_params,
+                )
             else:  # rsi_divergence_sr (default)
                 signals = generate_signals(
                     analysis,
@@ -843,7 +862,7 @@ class ReplayEngine:
             reversal = check_exit_vwap(analysis, df, current_side)
         elif self._strategy == "exhaustion_reversal":
             reversal = check_exit_exhaustion(analysis, df, current_side)
-        elif self._strategy in ("refined_rsi", "refined_rsi_v2", "refined_rsi_v3", "refined_rsi_v4", "refined_rsi_v5"):
+        elif self._strategy in ("refined_rsi", "refined_rsi_v2", "refined_rsi_v3", "refined_rsi_v4", "refined_rsi_v5", "refined_rsi_v6", "refined_rsi_v7"):
             entry_time = None
             for tr in reversed(self._trade_records):
                 if tr["status"] == "OPEN" and tr["symbol"] == symbol:
@@ -858,22 +877,31 @@ class ReplayEngine:
                     current_time = datetime.fromisoformat(str(timestamp))
                 except (ValueError, TypeError):
                     pass
-            reversal = check_exit_refined_rsi(
-                analysis, df, current_side,
-                entry_time=entry_time,
-                current_time=current_time,
-                tf_params=self._tf_params,
-            )
+            if self._strategy in ("refined_rsi_v6", "refined_rsi_v7"):
+                reversal = check_exit_refined_rsi_v6(
+                    analysis, df, current_side,
+                    entry_time=entry_time,
+                    current_time=current_time,
+                    tf_params=self._tf_params,
+                )
+            else:
+                reversal = check_exit_refined_rsi(
+                    analysis, df, current_side,
+                    entry_time=entry_time,
+                    current_time=current_time,
+                    tf_params=self._tf_params,
+                )
         else:
             reversal = check_reversal_signal(analysis, current_side, close_prices)
 
         if reversal:
             close_price = float(df["close"].iloc[-1])
             ts_str = timestamp.isoformat() if hasattr(timestamp, "isoformat") else str(timestamp)
-            closed_trade = self.broker.close_position(symbol, close_price)
+            # refined_rsi returns a string exit reason; other strategies return bool
+            exit_reason = reversal if isinstance(reversal, str) else "reversal"
+            closed_trade = self.broker.close_position(symbol, close_price, exit_reason=exit_reason)
             if closed_trade:
-                self._close_trade_record(closed_trade, ts_str,
-                    f"Reversal detected (RSI {analysis.rsi_current:.0f})")
+                self._close_trade_record(closed_trade, ts_str, exit_reason)
 
     async def _rank_and_execute(self, all_signals: list[TradingSignal], timestamp) -> None:
         """Sort signals by confidence, greedily fill best-to-worst."""
@@ -933,6 +961,7 @@ class ReplayEngine:
                 "ib_order_id": order_id,
                 "signal_id": None,
                 "divergence_timeframe": signal.divergence_timeframe,
+                "exit_reason": None,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
@@ -960,6 +989,7 @@ class ReplayEngine:
                 tr["pnl"] = ct["pnl"]
                 tr["pnl_pct"] = ct["pnl_pct"]
                 tr["status"] = "CLOSED"
+                tr["exit_reason"] = ct.get("exit_reason", "unknown")
                 tr["updated_at"] = datetime.now(timezone.utc).isoformat()
 
                 # Record outcome for per-symbol adaptive weighting
@@ -989,6 +1019,7 @@ class ReplayEngine:
                 tr["pnl"] = closed_trade["pnl"]
                 tr["pnl_pct"] = closed_trade["pnl_pct"]
                 tr["status"] = "CLOSED"
+                tr["exit_reason"] = closed_trade.get("exit_reason", close_reason)
                 tr["reason"] = tr["reason"] + f" | Closed: {close_reason}"
                 tr["updated_at"] = datetime.now(timezone.utc).isoformat()
 

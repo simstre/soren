@@ -12,14 +12,27 @@ export function useCandles(symbol: string, timeframe = "5m") {
   const noMoreDataRef = useRef(false);
   const loadingMoreRef = useRef(false);
   const candlesRef = useRef(candles);
+  const prevSymbolRef = useRef<string>("");
+  const prevTimeframeRef = useRef<string>("");
 
   // Keep refs in sync via effects
   useEffect(() => {
     candlesRef.current = candles;
   }, [candles]);
 
-  // Reset when symbol/timeframe changes
+  // Reset when symbol/timeframe changes — skip re-fetch if same symbol+timeframe with data
   useEffect(() => {
+    if (
+      prevSymbolRef.current === symbol &&
+      prevTimeframeRef.current === timeframe &&
+      candlesRef.current.length > 0
+    ) {
+      setLoading(false);
+      return;
+    }
+    prevSymbolRef.current = symbol;
+    prevTimeframeRef.current = timeframe;
+
     let cancelled = false;
     noMoreDataRef.current = false;
 
