@@ -33,7 +33,9 @@ from app.engine.signal_generator import (
     check_exit_refined_rsi,
     generate_signals_refined_rsi_v6,
     generate_signals_refined_rsi_v7,
+    generate_signals_refined_rsi_v8,
     check_exit_refined_rsi_v6,
+    check_exit_refined_rsi_v8,
     TimeframeParams,
     get_timeframe_params,
 )
@@ -161,6 +163,7 @@ class ReplayEngine:
         position_size_pct: float = 0.05,
         strategy: str = "rsi_divergence_sr",
         headless: bool = False,
+        instant: bool = False,
     ) -> None:
         if self._running:
             await self.stop()
@@ -185,6 +188,7 @@ class ReplayEngine:
         self._paused = False
         self._pause_event.set()
         self._headless = headless
+        self._instant = instant
         self._cooldown_bars = {}
         self._symbol_stats = {}
         self._gated_symbols = set()
@@ -246,7 +250,7 @@ class ReplayEngine:
         self._div_dataframes = {}
         self._trackers = {}
 
-        if self._strategy in ("rsi_divergence_sr", "refined_rsi", "refined_rsi_v2", "refined_rsi_v3", "refined_rsi_v4", "refined_rsi_v5", "refined_rsi_v6", "refined_rsi_v7"):
+        if self._strategy in ("rsi_divergence_sr", "refined_rsi", "refined_rsi_v2", "refined_rsi_v3", "refined_rsi_v4", "refined_rsi_v5", "refined_rsi_v6", "refined_rsi_v7", "refined_rsi_v8"):
             candidates = CANDIDATE_TIMEFRAMES.get(timeframe, [timeframe])
             active_tfs = list(CANDIDATE_TIMEFRAMES.get(timeframe, [timeframe]))
             for sym in symbol_dataframes:
@@ -596,13 +600,14 @@ class ReplayEngine:
         min_bars = 20
         equity_curve: list[dict] = []
         headless = self._headless
+        instant = self._instant
 
         try:
             for bar_idx, timestamp in enumerate(unified_timeline):
                 if not self._running:
                     break
 
-                if not headless:
+                if not headless and not instant:
                     await self._pause_event.wait()
                     if not self._running:
                         break
@@ -628,7 +633,8 @@ class ReplayEngine:
                     self.broker.set_current_price(sym, close_price)
                     self.broker.update_position_prices(sym, close_price)
 
-                    if not headless:
+                    # In instant mode, skip candle broadcasts
+                    if not headless and not instant:
                         candle_data = {
                             "symbol": sym,
                             "timestamp": timestamp.isoformat(),
@@ -675,26 +681,32 @@ class ReplayEngine:
                 })
 
                 if not headless:
-                    positions = await self.broker.get_positions()
-                    await ws_manager.broadcast("replay_positions", {
-                        "positions": [
-                            {
-                                "symbol": p.symbol,
-                                "quantity": abs(p.quantity),
-                                "avg_cost": p.avg_cost,
-                                "current_price": p.current_price,
-                                "unrealized_pnl": p.unrealized_pnl,
-                                "unrealized_pnl_pct": p.unrealized_pnl_pct,
-                                "market_value": p.market_value,
-                            }
-                            for p in positions
-                        ]
-                    })
+                    if instant:
+                        # In instant mode: broadcast progress every ~500 bars
+                        if bar_idx % 500 == 0:
+                            await self._broadcast_state()
+                            await asyncio.sleep(0)  # yield to event loop
+                    else:
+                        positions = await self.broker.get_positions()
+                        await ws_manager.broadcast("replay_positions", {
+                            "positions": [
+                                {
+                                    "symbol": p.symbol,
+                                    "quantity": abs(p.quantity),
+                                    "avg_cost": p.avg_cost,
+                                    "current_price": p.current_price,
+                                    "unrealized_pnl": p.unrealized_pnl,
+                                    "unrealized_pnl_pct": p.unrealized_pnl_pct,
+                                    "market_value": p.market_value,
+                                }
+                                for p in positions
+                            ]
+                        })
 
-                    await self._broadcast_state()
+                        await self._broadcast_state()
 
-                    delay = BASE_DELAY / self._speed
-                    await asyncio.sleep(delay)
+                        delay = BASE_DELAY / self._speed
+                        await asyncio.sleep(delay)
 
             # Replay complete
             self._running = False
@@ -751,11 +763,11 @@ class ReplayEngine:
 
             # Divergence
             best_div = None
-            if self._strategy in ("rsi_divergence_sr", "refined_rsi", "refined_rsi_v2", "refined_rsi_v3", "refined_rsi_v4", "refined_rsi_v5", "refined_rsi_v6", "refined_rsi_v7"):
+            if self._strategy in ("rsi_divergence_sr", "refined_rsi", "refined_rsi_v2", "refined_rsi_v3", "refined_rsi_v4", "refined_rsi_v5", "refined_rsi_v6", "refined_rsi_v7", "refined_rsi_v8"):
                 best_div = self._scan_divergences(symbol, timestamp)
 
             # Suppress during cooldown
-            if self._cooldown_bars.get(symbol, 0) > 0 and self._strategy in ("refined_rsi", "refined_rsi_v2", "refined_rsi_v3", "refined_rsi_v4", "refined_rsi_v5", "refined_rsi_v7"):
+            if self._cooldown_bars.get(symbol, 0) > 0 and self._strategy in ("refined_rsi", "refined_rsi_v2", "refined_rsi_v3", "refined_rsi_v4", "refined_rsi_v5", "refined_rsi_v7", "refined_rsi_v8"):
                 best_div = None
 
             # Strategy dispatch
@@ -831,6 +843,14 @@ class ReplayEngine:
                     current_timestamp=timestamp,
                     tf_params=self._tf_params,
                 )
+            elif self._strategy == "refined_rsi_v8":
+                signals = generate_signals_refined_rsi_v8(
+                    analysis, df,
+                    stop_loss_pct=self._stop_loss_pct,
+                    best_divergence=best_div,
+                    current_timestamp=timestamp,
+                    tf_params=self._tf_params,
+                )
             else:  # rsi_divergence_sr (default)
                 signals = generate_signals(
                     analysis,
@@ -862,14 +882,16 @@ class ReplayEngine:
             reversal = check_exit_vwap(analysis, df, current_side)
         elif self._strategy == "exhaustion_reversal":
             reversal = check_exit_exhaustion(analysis, df, current_side)
-        elif self._strategy in ("refined_rsi", "refined_rsi_v2", "refined_rsi_v3", "refined_rsi_v4", "refined_rsi_v5", "refined_rsi_v6", "refined_rsi_v7"):
+        elif self._strategy in ("refined_rsi", "refined_rsi_v2", "refined_rsi_v3", "refined_rsi_v4", "refined_rsi_v5", "refined_rsi_v6", "refined_rsi_v7", "refined_rsi_v8"):
             entry_time = None
+            entry_price = None
             for tr in reversed(self._trade_records):
                 if tr["status"] == "OPEN" and tr["symbol"] == symbol:
                     try:
                         entry_time = datetime.fromisoformat(tr["entry_time"])
                     except (ValueError, TypeError):
                         pass
+                    entry_price = tr.get("entry_price")
                     break
             current_time = timestamp if isinstance(timestamp, datetime) else None
             if current_time is None:
@@ -877,7 +899,15 @@ class ReplayEngine:
                     current_time = datetime.fromisoformat(str(timestamp))
                 except (ValueError, TypeError):
                     pass
-            if self._strategy in ("refined_rsi_v6", "refined_rsi_v7"):
+            if self._strategy == "refined_rsi_v8":
+                reversal = check_exit_refined_rsi_v8(
+                    analysis, df, current_side,
+                    entry_time=entry_time,
+                    current_time=current_time,
+                    tf_params=self._tf_params,
+                    entry_price=entry_price,
+                )
+            elif self._strategy in ("refined_rsi_v6", "refined_rsi_v7"):
                 reversal = check_exit_refined_rsi_v6(
                     analysis, df, current_side,
                     entry_time=entry_time,

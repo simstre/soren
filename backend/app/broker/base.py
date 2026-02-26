@@ -75,6 +75,23 @@ class BrokerAdapter(ABC):
         """Get the current market price for a symbol."""
         ...
 
+    async def close_position(self, symbol: str) -> str | None:
+        """Close a single open position by symbol. Returns order ID or None."""
+        positions = await self.get_positions()
+        for pos in positions:
+            if pos.symbol == symbol:
+                price = await self.get_current_price(symbol)
+                side = "SELL" if pos.quantity > 0 else "BUY"
+                oid = await self.place_order(
+                    symbol=symbol,
+                    side=side,
+                    quantity=abs(pos.quantity),
+                    order_type="MARKET",
+                    limit_price=price,
+                )
+                return oid
+        return None
+
     async def close_all_positions(self) -> list[str]:
         """Close all open positions. Returns list of order IDs."""
         positions = await self.get_positions()

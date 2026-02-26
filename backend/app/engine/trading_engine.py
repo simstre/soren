@@ -15,8 +15,11 @@ from app.engine.signal_generator import (
     generate_signals_mean_reversion,
     generate_signals_vwap_bounce,
     generate_signals_refined_rsi,
+    generate_signals_refined_rsi_v8,
+    check_exit_refined_rsi_v8,
     detect_rsi_divergence,
     get_timeframe_params,
+    _V8_MAX_HOLD_MINUTES,
 )
 from app.engine.divergence_tracker import (
     DivergenceTracker,
@@ -109,6 +112,10 @@ class TradingEngine:
 
         try:
             while self.state.running:
+                # Phase 0: Enforce max_hold for v8 — close positions held too long
+                if self.state.strategy == "refined_rsi_v8":
+                    await self._enforce_max_hold()
+
                 # Phase 1: Collect signals from all tickers
                 all_signals: list[TradingSignal] = []
                 for symbol in self.state.active_tickers:
@@ -163,7 +170,18 @@ class TradingEngine:
         strategy = self.state.strategy
         stop_loss_pct = settings.stop_loss_pct or None
 
-        if strategy == "refined_rsi":
+        if strategy == "refined_rsi_v8":
+            best_div = self._get_divergence(analysis, df)
+            tf_params = get_timeframe_params(self.state.timeframe)
+            timestamp = df.index[-1] if len(df) > 0 else None
+            signals = generate_signals_refined_rsi_v8(
+                analysis, df,
+                stop_loss_pct=stop_loss_pct,
+                best_divergence=best_div,
+                current_timestamp=timestamp,
+                tf_params=tf_params,
+            )
+        elif strategy == "refined_rsi":
             best_div = self._get_divergence(analysis, df)
             tf_params = get_timeframe_params(self.state.timeframe)
             signals = generate_signals_refined_rsi(
@@ -191,6 +209,30 @@ class TradingEngine:
             )
 
         return signals
+
+    async def _enforce_max_hold(self):
+        """Close positions that have exceeded v8's max hold time (390 min)."""
+        now = datetime.now(timezone.utc)
+        for record in self._trade_records:
+            if record["status"] != "OPEN":
+                continue
+            entry_time = record.get("entry_time")
+            if not entry_time:
+                continue
+            if isinstance(entry_time, str):
+                entry_time = datetime.fromisoformat(entry_time)
+            held_minutes = (now - entry_time).total_seconds() / 60
+            if held_minutes >= _V8_MAX_HOLD_MINUTES:
+                try:
+                    close_oid = await self.broker.close_position(record["symbol"])
+                    record["status"] = "CLOSED"
+                    record["exit_time"] = now.isoformat()
+                    record["exit_reason"] = "max_hold"
+                    record["updated_at"] = now.isoformat()
+                    logger.info("max_hold_exit", symbol=record["symbol"], held_minutes=round(held_minutes), close_order_id=close_oid)
+                    await ws_manager.broadcast("trade_closed", record)
+                except Exception as e:
+                    logger.error("max_hold_close_failed", symbol=record["symbol"], error=str(e))
 
     def _get_divergence(self, analysis, df: pd.DataFrame) -> DivergenceSignal | None:
         """Detect RSI divergence and return best signal via tracker."""

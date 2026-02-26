@@ -18,6 +18,7 @@ class ReplayStartRequest(BaseModel):
     stop_loss_pct: float = 0.02  # 2% stop loss by default
     position_size_pct: float = 0.05  # 5% of account per trade
     strategy: str = "rsi_divergence_sr"
+    instant: bool = True  # instant mode: skip candle broadcasts & sleep
 
 
 class ReplaySpeedRequest(BaseModel):
@@ -69,6 +70,7 @@ async def start_replay(req: ReplayStartRequest):
             stop_loss_pct=req.stop_loss_pct,
             position_size_pct=req.position_size_pct,
             strategy=req.strategy,
+            instant=req.instant,
         )
     except ValueError as e:
         _log.error("replay_start_failed", error=str(e))

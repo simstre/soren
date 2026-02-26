@@ -19,6 +19,11 @@ class ScanConfig:
     max_hold_bars: int = 120
     cooldown_bars: int = 30
     flip_signals: bool = False  # contrarian strategies (v6/v7)
+    # Percentage-based stops/targets (v8+). When use_pct_stops=True,
+    # stop/target are computed from entry price × pct, ignoring ATR mults.
+    use_pct_stops: bool = False
+    stop_pct: float = 0.02   # 2% stop loss
+    target_pct: float = 0.06  # 6% take profit
 
 
 @dataclass
@@ -75,6 +80,16 @@ STRATEGIES: list[StrategyDef] = [
         description="Wider entry filters: RSI bands 28-48/52-72, S/R strength >= 3, min spread 5. More trades, tested against UNH/AAPL/GOOGL/MSFT/TSLA performance profile. ATR stops 1.8x, targets 3.5x.",
         entry_rule="RSI div + S/R ≥3 + wider RSI bands + ATR stops",
         scan_config=ScanConfig(atr_stop_mult=1.8, atr_target_mult=3.5, rsi_buy_hi=48, rsi_sell_lo=52, min_rsi_spread=5, sr_min_strength=3),
+    ),
+    StrategyDef(
+        id="refined_rsi_v8",
+        name="RSI Divergence PCT v8",
+        description="Percentage-based stops/targets (2% SL, 6% target) instead of ATR-based. Extended hold (1 trading day = 390 bars), no RSI reversal exit, no EOD close, trailing breakeven after 1.5%. Designed for 1m candles where ATR-based stops are too tight.",
+        entry_rule="RSI div + S/R ≥5 + vol confirm + pct stops + extended hold",
+        scan_config=ScanConfig(
+            max_hold_bars=390, cooldown_bars=60,
+            use_pct_stops=True, stop_pct=0.02, target_pct=0.06,
+        ),
     ),
     StrategyDef(
         id="rsi_divergence_sr",

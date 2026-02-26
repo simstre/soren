@@ -1669,3 +1669,179 @@ def check_exit_refined_rsi_v6(
                 return "eod_close"
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# v8 — Percentage-based stops/targets with extended holding for 1m candles
+# ---------------------------------------------------------------------------
+#
+# Key insight: on 1m candles, ATR is only 0.06-0.31% of price, making
+# ATR-based stops absurdly tight.  Stocks regularly move 2-5%+ per day.
+# v8 uses the full stop_loss_pct (e.g. 2%) and a wide % target (4%) to
+# capture multi-hour/multi-day mean-reversion moves after divergences.
+#
+# Design rationale:
+# - Use v1's entry logic (strongest filter: divergence + S/R≥5 + tight RSI)
+# - Use pct-based stop/target instead of ATR (room to breathe)
+# - Extended max_hold (2 trading days) — let trades develop
+# - No RSI reversal exit — let winners run to target
+# - No EOD close — hold overnight if needed
+# - Trailing breakeven after 1.5% profit
+# - Volume confirmation (skip thin bars)
+
+_V8_TARGET_PCT = 0.06       # 6% target (optimal from sweep)
+_V8_MAX_HOLD_MINUTES = 390   # 1 trading day (6.5h = 390 min, optimal from sweep)
+
+
+def generate_signals_refined_rsi_v8(
+    analysis: AnalysisResult,
+    df: pd.DataFrame,
+    stop_loss_pct: float | None = None,
+    best_divergence: "DivergenceSignal | None" = None,
+    current_timestamp: "datetime | None" = None,
+    tf_params: "TimeframeParams | None" = None,
+) -> list[TradingSignal]:
+    """Percentage-based stops/targets for 1m candles, extended holding.
+
+    Uses v1's entry filters (divergence + S/R≥5 + RSI bands) but replaces
+    ATR-based stops/targets with percentage-based ones to give trades room
+    to develop over hours/days.
+    """
+    if tf_params is None:
+        tf_params = get_timeframe_params("5m")
+
+    price = analysis.current_price
+    if price <= 0 or len(df) < 20:
+        return []
+
+    # Must have divergence
+    if best_divergence is None:
+        return []
+
+    # --- Filter 1: Minimum divergence strength ---
+    if best_divergence.rsi_spread < tf_params.min_rsi_spread:
+        return []
+
+    # --- Filter 2: No entries in first 15 minutes (noisy open) ---
+    if current_timestamp is not None and hasattr(current_timestamp, "hour"):
+        hour = current_timestamp.hour
+        minute = current_timestamp.minute if hasattr(current_timestamp, "minute") else 0
+        if hour == 9 and minute < 45:
+            return []
+        # No late-day entries (after 3 PM — give at least 1 hour before close)
+        if hour >= 15:
+            return []
+
+    rsi_val = analysis.rsi_current
+
+    # --- Filter 3: RSI band (use v1's tight bands for quality) ---
+    allow_buy = tf_params.rsi_buy_lo <= rsi_val < tf_params.rsi_buy_hi
+    allow_sell = tf_params.rsi_sell_lo < rsi_val <= tf_params.rsi_sell_hi
+
+    # --- Filter 4: S/R proximity with minimum strength >= 5 ---
+    sr_factors = _detect_sr_factors(analysis, price)
+    sr_factors = [f for f in sr_factors if f.sr_strength >= 5]
+    if not sr_factors:
+        return []
+
+    # --- Filter 5: Volume confirmation (>= 50% of 20-bar avg) ---
+    if "volume" in df.columns and len(df) >= 20:
+        cur_vol = float(df["volume"].iloc[-1])
+        avg_vol = float(df["volume"].iloc[-20:].mean())
+        if avg_vol > 0 and cur_vol < avg_vol * 0.5:
+            return []
+
+    # Map divergence direction to trade side
+    div_side = "BUY" if best_divergence.direction == "bullish" else "SELL"
+
+    agreeing = [f for f in sr_factors if f.side == div_side]
+    if not agreeing:
+        return []
+
+    if div_side == "BUY" and not allow_buy:
+        return []
+    if div_side == "SELL" and not allow_sell:
+        return []
+
+    best_sr = max(agreeing, key=lambda f: f.sr_strength)
+
+    confidence = min(0.95, best_sr.confidence + best_divergence.weight * 0.4)
+
+    # --- Percentage-based stop loss (NOT ATR-based) ---
+    sl_pct = stop_loss_pct if (stop_loss_pct is not None and stop_loss_pct > 0) else 0.02
+    stop_dist = price * sl_pct
+
+    if div_side == "BUY":
+        stop = round(price - stop_dist, 2)
+    else:
+        stop = round(price + stop_dist, 2)
+
+    # --- Percentage-based target ---
+    target_dist = price * _V8_TARGET_PCT
+
+    if div_side == "BUY":
+        target = round(price + target_dist, 2)
+    else:
+        target = round(price - target_dist, 2)
+
+    # --- Setup quality grading ---
+    _grade_score = 0
+    if best_divergence.rsi_spread >= 12:
+        _grade_score += 2
+    elif best_divergence.rsi_spread >= 8:
+        _grade_score += 1
+    if best_sr.sr_strength >= 8:
+        _grade_score += 2
+    elif best_sr.sr_strength >= 5:
+        _grade_score += 1
+    if confidence >= 0.7:
+        _grade_score += 1
+    _grade_map = {5: "A", 4: "B", 3: "C", 2: "D"}
+    _setup_grade = _grade_map.get(_grade_score, "E" if _grade_score < 2 else "A")
+
+    reason = (
+        f"[{_setup_grade}] {best_sr.reason} + {best_divergence.description} ({best_divergence.timeframe}) "
+        f"[sp={best_divergence.rsi_spread:.0f}] [v8-pct SL={sl_pct*100:.1f}% T={_V8_TARGET_PCT*100:.1f}%]"
+    )
+
+    return [
+        TradingSignal(
+            symbol=analysis.symbol,
+            signal_type=div_side,
+            entry_price=price,
+            stop_loss=stop,
+            profit_target=target,
+            reason=reason,
+            pattern_type="refined_rsi_v8",
+            confidence=confidence,
+            created_at=datetime.now(timezone.utc),
+            has_rsi_divergence=True,
+            sr_strength=best_sr.sr_strength,
+            divergence_timeframe=best_divergence.timeframe,
+        )
+    ]
+
+
+def check_exit_refined_rsi_v8(
+    analysis: AnalysisResult,
+    df: pd.DataFrame,
+    current_side: str,
+    entry_time: datetime | None = None,
+    current_time: datetime | None = None,
+    tf_params: "TimeframeParams | None" = None,
+    entry_price: float | None = None,
+) -> str | None:
+    """Exit logic for v8 — time-based hold only, no trailing stops.
+
+    - Max hold: 1 trading day (390 min)
+    - No EOD close (hold overnight)
+    - No RSI reversal exit
+    - No trailing stops (empirically hurt P&L due to intraday noise)
+    - Only exits: max_hold timeout or stop_loss (handled by replay engine)
+    """
+    if entry_time is not None and current_time is not None:
+        held_minutes = (current_time - entry_time).total_seconds() / 60
+        if held_minutes >= _V8_MAX_HOLD_MINUTES:
+            return "max_hold"
+
+    return None

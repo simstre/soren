@@ -21,6 +21,9 @@ SCAN_UNIVERSE = [
     "DIS", "CMCSA", "T", "VZ", "TMUS",
     "BA", "CAT", "DE", "GE", "HON", "RTX", "LMT", "NOC",
     "SPY", "QQQ", "IWM", "DIA",
+    # High-volatility / growth — strong v8 candidates
+    "PLTR", "CEG", "SOFI", "RIVN", "RKLB", "COIN", "HOOD", "MSTR",
+    "SMCI", "ARM", "AFRM", "CRWD", "SNOW", "DDOG", "NET", "SHOP",
 ]
 
 

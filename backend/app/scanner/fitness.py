@@ -66,13 +66,13 @@ def _empty_score(symbol: str, disqualify_reason: str, price: float = 0,
 # Volume floor (10 pts): Minimum liquidity for reliable candles.
 # ---------------------------------------------------------------------------
 
-def _score_signal_win_rate(win_rate: float, num_setups: int) -> float:
+def _score_signal_win_rate(win_rate: float, num_setups: int, min_setups: int = 3) -> float:
     """0-50 pts. Based on simulated mini-trade win rate.
 
-    Requires at least 3 setups to be meaningful. Win rates below 35% score 0
+    Requires at least min_setups to be meaningful. Win rates below 35% score 0
     (breakeven with 2:3 R:R is ~40%). 60%+ scores max. Linear between.
     """
-    if num_setups < 3:
+    if num_setups < min_setups:
         return 0.0
     if win_rate <= 0.35:
         return 0.0
@@ -81,13 +81,13 @@ def _score_signal_win_rate(win_rate: float, num_setups: int) -> float:
     return (win_rate - 0.35) / 0.25 * 50
 
 
-def _score_total_pnl(total_pnl_pct: float, num_setups: int) -> float:
+def _score_total_pnl(total_pnl_pct: float, num_setups: int, min_setups: int = 3) -> float:
     """0-30 pts. Based on total cumulative P&L from simulated trades.
 
     Negative or zero → 0 pts. 2%+ total → 30 pts. Linear between.
-    Requires at least 3 setups to be meaningful.
+    Requires at least min_setups to be meaningful.
     """
-    if num_setups < 3:
+    if num_setups < min_setups:
         return 0.0
     if total_pnl_pct <= 0:
         return 0.0
@@ -98,21 +98,49 @@ def _score_total_pnl(total_pnl_pct: float, num_setups: int) -> float:
 
 def _score_volume(avg_volume: float) -> float:
     """0-10 pts. Once above 10M, volume barely matters."""
-    if avg_volume < 5_000_000:
+    if avg_volume < 1_000_000:
         return 0.0
     if avg_volume >= 50_000_000:
         return 10.0
-    return (avg_volume - 5_000_000) / (50_000_000 - 5_000_000) * 10
+    return (avg_volume - 1_000_000) / (50_000_000 - 1_000_000) * 10
 
 
-def _score_atr_range(atr_pct: float) -> float:
-    """0-10 pts. Peak at 1.5-5.0% daily ATR range."""
+def _score_daily_trend(daily_returns: pd.Series) -> float:
+    """0-10 pts. Measures how often intraday moves continue next day.
+
+    Computed as fraction of consecutive same-sign daily returns.
+    Higher = more trending behavior = better for v8's 1-day holds.
+    """
+    if len(daily_returns) < 10:
+        return 0.0
+    signs = daily_returns.dropna().apply(lambda x: 1 if x > 0 else (-1 if x < 0 else 0))
+    same_sign = sum(1 for i in range(1, len(signs)) if signs.iloc[i] == signs.iloc[i-1] and signs.iloc[i] != 0)
+    total = sum(1 for i in range(1, len(signs)) if signs.iloc[i] != 0 and signs.iloc[i-1] != 0)
+    if total < 5:
+        return 0.0
+    ratio = same_sign / total  # 0.0 to 1.0
+    # 40% same-sign is random. 55%+ is strongly trending.
+    if ratio <= 0.40:
+        return 0.0
+    if ratio >= 0.55:
+        return 10.0
+    return (ratio - 0.40) / 0.15 * 10
+
+
+def _score_atr_range(atr_pct: float, no_upper_penalty: bool = False) -> float:
+    """0-10 pts. Peak at 1.5-5.0% daily ATR range.
+
+    When no_upper_penalty=True (v8), don't penalize ATR above 5% —
+    higher volatility is strictly better for pct-based strategies.
+    """
     if atr_pct < 0.5:
         return atr_pct / 0.5 * 3
     if atr_pct < 1.5:
         return 3.0 + (atr_pct - 0.5) / 1.0 * 7  # 3 → 10
     if atr_pct <= 5.0:
         return 10.0
+    if no_upper_penalty:
+        return 10.0  # v8: no penalty for high ATR
     if atr_pct <= 7.0:
         return 10.0 - (atr_pct - 5.0) / 2.0 * 10
     return 0.0
@@ -125,13 +153,17 @@ def _score_atr_range(atr_pct: float) -> float:
 async def _phase1_daily_filter(
     universe: list[str],
     top_n: int = 40,
-) -> list[tuple[str, float, int, float]]:
+    scan_config: ScanConfig | None = None,
+) -> list[tuple[str, float, int, float, pd.Series | None]]:
     """Fetch daily data, apply hard disqualifiers.
 
     Hard disqualifiers: price < $10, volume < 500K, ATR% > 7%.
-    Returns list of (symbol, price, avg_volume, atr_pct).
+    For pct-based strategies (v8+): also require ATR% >= 2.5% — low-range
+    tickers can't generate enough movement for 1-day holds to profit.
+    Returns list of (symbol, price, avg_volume, atr_pct, daily_returns).
     """
-    candidates: list[tuple[str, float, int, float]] = []
+    min_atr_pct = 2.5 if (scan_config and scan_config.use_pct_stops) else 0
+    candidates: list[tuple[str, float, int, float, pd.Series | None]] = []
 
     for symbol in universe:
         try:
@@ -155,15 +187,26 @@ async def _phase1_daily_filter(
             current_atr = float(atr_series.iloc[-1]) if not atr_series.empty and not np.isnan(atr_series.iloc[-1]) else 0
             atr_pct = (current_atr / price * 100) if price > 0 else 0
 
-            if price < 10 or avg_volume < 500_000 or atr_pct > 7:
+            # Hard disqualifiers: price < $10, volume < 500K
+            if price < 10 or avg_volume < 500_000:
+                continue
+            # ATR cap: 7% for default strategies, 12% for v8 (high vol is good)
+            max_atr_pct = 12 if (scan_config and scan_config.use_pct_stops) else 7
+            if atr_pct > max_atr_pct:
+                continue
+            if atr_pct < min_atr_pct:
                 continue
 
-            candidates.append((symbol, price, avg_volume, atr_pct))
+            daily_returns = df["close"].pct_change()
+            candidates.append((symbol, price, avg_volume, atr_pct, daily_returns))
 
         except Exception as e:
             logger.debug("phase1_error", symbol=symbol, error=str(e))
             continue
 
+    # Sort by ATR% descending so high-volatility tickers (best for v8)
+    # don't get truncated when the list exceeds top_n.
+    candidates.sort(key=lambda c: c[3], reverse=True)
     logger.info("phase1_complete", total=len(universe), passed=len(candidates))
     return candidates[:top_n]
 
@@ -264,8 +307,12 @@ def _simulate_signals_on_1m(df: pd.DataFrame, scan_config: ScanConfig | None = N
 
         # Valid setup — simulate the trade
         num_setups += 1
-        stop_dist = atr_val * scan_config.atr_stop_mult
-        target_dist = atr_val * scan_config.atr_target_mult
+        if scan_config.use_pct_stops:
+            stop_dist = entry_price * scan_config.stop_pct
+            target_dist = entry_price * scan_config.target_pct
+        else:
+            stop_dist = atr_val * scan_config.atr_stop_mult
+            target_dist = atr_val * scan_config.atr_target_mult
 
         if direction == "bullish":
             stop = entry_price - stop_dist
@@ -317,16 +364,45 @@ async def _score_ticker(
     avg_volume: int,
     atr_pct: float,
     scan_config: ScanConfig | None = None,
+    daily_returns: pd.Series | None = None,
 ) -> FitnessScore:
-    """Fetch 7 days of 1m data, simulate mini-trades, score on quality."""
+    """Fetch 1m data and simulate mini-trades to score quality.
+
+    For pct-based strategies (v8+), fetches max available 1m data (~30 days)
+    since longer hold periods need more data for statistical significance.
+    """
     try:
         ticker = yf.Ticker(symbol)
 
+        # For pct-based strategies (v8+), fetch multiple 7-day chunks
+        # to get ~28 days of 1m data (Yahoo limits 1m to 8 days/request).
+        use_extended = scan_config is not None and scan_config.use_pct_stops
+
         df = pd.DataFrame()
-        for _attempt in range(3):
-            df = ticker.history(period="7d", interval="1m")
-            if not df.empty:
-                break
+        if use_extended:
+            from datetime import datetime, timedelta
+            end = datetime.now()
+            chunks = []
+            for chunk_i in range(4):  # 4 chunks × 7 days = 28 days
+                chunk_end = end - timedelta(days=chunk_i * 7)
+                chunk_start = chunk_end - timedelta(days=7)
+                for _attempt in range(2):
+                    chunk_df = ticker.history(
+                        start=chunk_start.strftime("%Y-%m-%d"),
+                        end=chunk_end.strftime("%Y-%m-%d"),
+                        interval="1m",
+                    )
+                    if not chunk_df.empty:
+                        chunks.append(chunk_df)
+                        break
+            if chunks:
+                df = pd.concat(chunks).sort_index()
+                df = df[~df.index.duplicated(keep='first')]
+        else:
+            for _attempt in range(3):
+                df = ticker.history(period="7d", interval="1m")
+                if not df.empty:
+                    break
 
         if df.empty or len(df) < 100:
             return _empty_score(symbol, "insufficient 1m data", price, avg_volume, atr_pct)
@@ -339,13 +415,32 @@ async def _score_ticker(
         win_rate = wins / num_setups if num_setups > 0 else 0
         avg_pnl = total_pnl_pct / num_setups if num_setups > 0 else 0
 
-        # Score components
-        wr_s = _score_signal_win_rate(win_rate, num_setups)
-        pnl_s = _score_total_pnl(total_pnl_pct, num_setups)
-        vol_s = _score_volume(avg_volume)
-        atr_s = _score_atr_range(atr_pct)
+        # For pct-based strategies, lower the min setups requirement
+        # since longer holds (390 bars) produce fewer trades.
+        min_setups_for_scoring = 2 if (scan_config and scan_config.use_pct_stops) else 3
 
-        total = wr_s + pnl_s + vol_s + atr_s
+        # Score components
+        is_pct = scan_config and scan_config.use_pct_stops
+        wr_s = _score_signal_win_rate(win_rate, num_setups, min_setups=min_setups_for_scoring)
+        pnl_s = _score_total_pnl(total_pnl_pct, num_setups, min_setups=min_setups_for_scoring)
+        vol_s = _score_volume(avg_volume)
+        atr_s = _score_atr_range(atr_pct, no_upper_penalty=bool(is_pct))
+
+        # For pct-based strategies (v8+), the mini-backtest signal detection
+        # doesn't match the actual strategy well enough to predict P&L.
+        # Instead, weight toward observable characteristics that correlate
+        # with actual v8 success: high daily range + trend persistence.
+        # Reweight: ATR 40 + Trend 30 + PnL 15 + Vol 15 = 100
+        if is_pct:
+            trend_s = _score_daily_trend(daily_returns) if daily_returns is not None else 0
+            wr_s = 0                    # ignore WR (unreliable for v8)
+            pnl_s = pnl_s * (15/30)     # 30 → 15
+            vol_s = vol_s * 1.5          # 10 → 15
+            atr_s = atr_s * 4.0          # 10 → 40
+            trend_s = trend_s * 3.0      # 10 → 30
+            total = wr_s + pnl_s + vol_s + atr_s + trend_s
+        else:
+            total = wr_s + pnl_s + vol_s + atr_s
 
         logger.info(
             "phase2_minitrades",
@@ -384,11 +479,11 @@ async def _score_ticker(
 
 async def score_ticker(symbol: str, bars: int = 60, scan_config: ScanConfig | None = None) -> FitnessScore:
     """Score a single ticker through both phases."""
-    candidates = await _phase1_daily_filter([symbol], top_n=1)
+    candidates = await _phase1_daily_filter([symbol], top_n=1, scan_config=scan_config)
     if not candidates:
         return _empty_score(symbol, "failed Phase 1 filter")
-    sym, price, avg_volume, atr_pct = candidates[0]
-    return await _score_ticker(sym, price, avg_volume, atr_pct, scan_config)
+    sym, price, avg_volume, atr_pct, daily_returns = candidates[0]
+    return await _score_ticker(sym, price, avg_volume, atr_pct, scan_config, daily_returns)
 
 
 async def run_fitness_scan(
@@ -405,12 +500,12 @@ async def run_fitness_scan(
 
     logger.info("fitness_scan_start", symbols=len(symbols), top_n=top_n)
 
-    candidates = await _phase1_daily_filter(symbols, top_n=40)
+    candidates = await _phase1_daily_filter(symbols, top_n=40, scan_config=scan_config)
     logger.info("phase1_candidates", count=len(candidates))
 
     scores: list[FitnessScore] = []
-    for sym, price, avg_volume, atr_pct in candidates:
-        score = await _score_ticker(sym, price, avg_volume, atr_pct, scan_config)
+    for sym, price, avg_volume, atr_pct, daily_returns in candidates:
+        score = await _score_ticker(sym, price, avg_volume, atr_pct, scan_config, daily_returns)
         scores.append(score)
 
     qualified = [s for s in scores if not s.disqualified]

@@ -90,6 +90,28 @@ class IBAdapter(BrokerAdapter):
         logger.info("ib_order_placed", order_id=order_id, symbol=symbol, side=side, qty=quantity)
         return order_id
 
+    async def close_position(self, symbol: str) -> str | None:
+        """Close a single position, cancelling bracket orders (SL/TP) first."""
+        # Cancel all open orders for this symbol (bracket SL/TP children)
+        for trade in self._ib.openTrades():
+            if trade.contract.symbol == symbol:
+                self._ib.cancelOrder(trade.order)
+
+        # Now close via market order
+        positions = await self.get_positions()
+        for pos in positions:
+            if pos.symbol == symbol:
+                from ib_async import Stock, MarketOrder
+                contract = Stock(symbol, "SMART", "USD")
+                await self._ib.qualifyContractsAsync(contract)
+                action = "SELL" if pos.quantity > 0 else "BUY"
+                order = MarketOrder(action, abs(pos.quantity))
+                trade = self._ib.placeOrder(contract, order)
+                order_id = str(trade.order.orderId)
+                logger.info("ib_position_closed", symbol=symbol, side=action, qty=abs(pos.quantity), order_id=order_id)
+                return order_id
+        return None
+
     async def cancel_order(self, order_id: str) -> None:
         for trade in self._ib.openTrades():
             if str(trade.order.orderId) == order_id:
