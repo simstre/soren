@@ -83,7 +83,7 @@ async def main():
             ticker_results = {}
 
             for ticker in tickers:
-                r = await run([ticker], "refined_rsi_v8")
+                r = await run([ticker], "rsi_divergence_pct")
                 if r:
                     total_pnl_all += r.total_pnl_pct
                     total_trades_all += r.total_trades
@@ -154,7 +154,7 @@ async def main():
         ]
 
         for name, symbols in portfolios:
-            r = await run(symbols, "refined_rsi_v8")
+            r = await run(symbols, "rsi_divergence_pct")
             if r:
                 pnl_sign = "+" if r.total_pnl_pct >= 0 else ""
                 exits = {}

@@ -15,8 +15,8 @@ from app.engine.signal_generator import (
     generate_signals_mean_reversion,
     generate_signals_vwap_bounce,
     generate_signals_refined_rsi,
-    generate_signals_refined_rsi_v8,
-    check_exit_refined_rsi_v8,
+    generate_signals_rsi_divergence_pct,
+    check_exit_rsi_divergence_pct,
     detect_rsi_divergence,
     get_timeframe_params,
 )
@@ -117,7 +117,7 @@ class TradingEngine:
         try:
             while self.state.running:
                 # Phase 0: Enforce max_hold for v8 — close positions held too long
-                if self.state.strategy == "refined_rsi_v8":
+                if self.state.strategy == "rsi_divergence_pct":
                     await self._enforce_max_hold()
 
                 # Phase 1: Collect signals from all tickers
@@ -175,11 +175,11 @@ class TradingEngine:
         sdef = self._strategy_def
         stop_loss_pct = sdef.stop_loss_pct if sdef else (settings.stop_loss_pct or None)
 
-        if strategy == "refined_rsi_v8":
+        if strategy == "rsi_divergence_pct":
             best_div = self._get_divergence(analysis, df)
             tf_params = get_timeframe_params(self.state.timeframe)
             timestamp = df.index[-1] if len(df) > 0 else None
-            signals = generate_signals_refined_rsi_v8(
+            signals = generate_signals_rsi_divergence_pct(
                 analysis, df,
                 stop_loss_pct=stop_loss_pct,
                 best_divergence=best_div,

@@ -30,7 +30,7 @@ export const useAppStore = create<AppState>((set) => ({
   performanceTab: "live",
   selectedTradeId: null,
   selectedTrade: null,
-  selectedStrategy: "refined_rsi_v8",
+  selectedStrategy: "rsi_divergence_pct",
   setSelectedTicker: (ticker) => set({ selectedTicker: ticker }),
   setTimeframe: (tf) => set({ timeframe: tf }),
   setEngineRunning: (running) => set({ engineRunning: running }),

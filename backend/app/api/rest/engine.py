@@ -9,7 +9,7 @@ router = APIRouter(prefix="/api/engine", tags=["engine"])
 
 
 class EngineStartRequest(BaseModel):
-    strategy: str = "refined_rsi_v8"
+    strategy: str = "rsi_divergence_pct"
     tickers: list[str] | None = None
     timeframe: str | None = None  # defaults to strategy's baked-in timeframe
 
@@ -43,7 +43,7 @@ async def start_engine(req: EngineStartRequest | None = None):
     if engine.state.running:
         return {"status": "already_running"}
 
-    strategy = req.strategy if req else "refined_rsi_v8"
+    strategy = req.strategy if req else "rsi_divergence_pct"
     sdef = get_strategy(strategy)
     timeframe = (req.timeframe if req and req.timeframe else None) or (sdef.timeframe if sdef else "1m")
     tickers = (req.tickers if req and req.tickers else None) or _tracked_tickers or ["AAPL"]

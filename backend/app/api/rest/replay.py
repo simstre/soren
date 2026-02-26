@@ -17,7 +17,7 @@ class ReplayStartRequest(BaseModel):
     speed: float = 1.0
     stop_loss_pct: float | None = None  # None → default from strategy
     position_size_pct: float | None = None  # None → default from strategy
-    strategy: str = "refined_rsi_v8"
+    strategy: str = "rsi_divergence_pct"
     instant: bool = True  # instant mode: skip candle broadcasts & sleep
 
 

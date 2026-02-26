@@ -27,8 +27,8 @@ from app.engine.signal_generator import (
     check_exit_vwap,
     check_exit_exhaustion,
     check_exit_refined_rsi,
-    generate_signals_refined_rsi_v8,
-    check_exit_refined_rsi_v8,
+    generate_signals_rsi_divergence_pct,
+    check_exit_rsi_divergence_pct,
     TimeframeParams,
     get_timeframe_params,
 )
@@ -250,7 +250,7 @@ class ReplayEngine:
         self._div_dataframes = {}
         self._trackers = {}
 
-        if self._strategy in ("rsi_divergence_sr", "refined_rsi", "refined_rsi_v8"):
+        if self._strategy in ("rsi_divergence_sr", "refined_rsi", "rsi_divergence_pct"):
             candidates = CANDIDATE_TIMEFRAMES.get(timeframe, [timeframe])
             active_tfs = list(CANDIDATE_TIMEFRAMES.get(timeframe, [timeframe]))
             for sym in symbol_dataframes:
@@ -763,11 +763,11 @@ class ReplayEngine:
 
             # Divergence
             best_div = None
-            if self._strategy in ("rsi_divergence_sr", "refined_rsi", "refined_rsi_v8"):
+            if self._strategy in ("rsi_divergence_sr", "refined_rsi", "rsi_divergence_pct"):
                 best_div = self._scan_divergences(symbol, timestamp)
 
             # Suppress during cooldown
-            if self._cooldown_bars.get(symbol, 0) > 0 and self._strategy in ("refined_rsi", "refined_rsi_v8"):
+            if self._cooldown_bars.get(symbol, 0) > 0 and self._strategy in ("refined_rsi", "rsi_divergence_pct"):
                 best_div = None
 
             # Strategy dispatch
@@ -795,8 +795,8 @@ class ReplayEngine:
                     current_timestamp=timestamp,
                     tf_params=self._tf_params,
                 )
-            elif self._strategy == "refined_rsi_v8":
-                signals = generate_signals_refined_rsi_v8(
+            elif self._strategy == "rsi_divergence_pct":
+                signals = generate_signals_rsi_divergence_pct(
                     analysis, df,
                     stop_loss_pct=self._stop_loss_pct,
                     best_divergence=best_div,
@@ -835,7 +835,7 @@ class ReplayEngine:
             reversal = check_exit_vwap(analysis, df, current_side)
         elif self._strategy == "exhaustion_reversal":
             reversal = check_exit_exhaustion(analysis, df, current_side)
-        elif self._strategy in ("refined_rsi", "refined_rsi_v8"):
+        elif self._strategy in ("refined_rsi", "rsi_divergence_pct"):
             entry_time = None
             entry_price = None
             for tr in reversed(self._trade_records):
@@ -852,8 +852,8 @@ class ReplayEngine:
                     current_time = datetime.fromisoformat(str(timestamp))
                 except (ValueError, TypeError):
                     pass
-            if self._strategy == "refined_rsi_v8":
-                reversal = check_exit_refined_rsi_v8(
+            if self._strategy == "rsi_divergence_pct":
+                reversal = check_exit_rsi_divergence_pct(
                     analysis, df, current_side,
                     entry_time=entry_time,
                     current_time=current_time,

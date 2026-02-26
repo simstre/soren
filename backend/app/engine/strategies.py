@@ -52,8 +52,8 @@ STRATEGIES: list[StrategyDef] = [
         scan_config=ScanConfig(),  # defaults = v1 params
     ),
     StrategyDef(
-        id="refined_rsi_v8",
-        name="RSI Divergence PCT v8",
+        id="rsi_divergence_pct",
+        name="RSI Divergence PCT",
         description="Percentage-based stops/targets (2% SL, 6% target) instead of ATR-based. 3h max hold (180 bars), no RSI reversal exit, no trailing stops. Designed for 1m candles where ATR-based stops are too tight.",
         entry_rule="RSI div + S/R ≥5 + vol confirm + pct stops + extended hold",
         scan_config=ScanConfig(

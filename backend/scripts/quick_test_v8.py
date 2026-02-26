@@ -42,7 +42,7 @@ async def run(symbols, strategy, days=29):
     print(f"  {strategy:>20s} | {','.join(symbols):>8s} | {pnl_sign}{r.total_pnl_pct:>7.2f}% | ${r.total_pnl:>+9,.0f} | {r.total_trades:>3d} trades | WR {r.win_rate:>5.1f}% | DD {r.max_drawdown_pct:>5.2f}% | {exit_str}")
 
     # Print individual trades for v8
-    if strategy == "refined_rsi_v8" and r.trades:
+    if strategy == "rsi_divergence_pct" and r.trades:
         print(f"\n    {'Side':>5s} | {'Entry$':>9s} | {'Exit$':>9s} | {'P&L$':>9s} | {'P&L%':>7s} | Entry Time → Exit Time | Exit Reason")
         print("    " + "-" * 100)
         for t in r.trades:
@@ -56,7 +56,7 @@ async def run(symbols, strategy, days=29):
 
 async def main():
     tickers = ["PLTR", "TSLA", "NVDA", "CEG"]
-    strategies = ["refined_rsi", "refined_rsi_v8"]
+    strategies = ["refined_rsi", "rsi_divergence_pct"]
 
     print(f"{'Strategy':>20s} | {'Ticker':>8s} | {'P&L%':>9s} | {'P&L$':>11s} | {'Trades':>6s} | {'WR%':>6s} | {'DD%':>6s} | Exit Reasons")
     print("-" * 120)

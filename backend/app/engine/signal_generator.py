@@ -986,7 +986,7 @@ _V8_TARGET_PCT = 0.06       # 6% target (optimal from sweep)
 _V8_MAX_HOLD_MINUTES = 390   # 1 trading day (6.5h = 390 min, optimal from sweep)
 
 
-def generate_signals_refined_rsi_v8(
+def generate_signals_rsi_divergence_pct(
     analysis: AnalysisResult,
     df: pd.DataFrame,
     stop_loss_pct: float | None = None,
@@ -1107,7 +1107,7 @@ def generate_signals_refined_rsi_v8(
             stop_loss=stop,
             profit_target=target,
             reason=reason,
-            pattern_type="refined_rsi_v8",
+            pattern_type="rsi_divergence_pct",
             confidence=confidence,
             created_at=datetime.now(timezone.utc),
             has_rsi_divergence=True,
@@ -1117,7 +1117,7 @@ def generate_signals_refined_rsi_v8(
     ]
 
 
-def check_exit_refined_rsi_v8(
+def check_exit_rsi_divergence_pct(
     analysis: AnalysisResult,
     df: pd.DataFrame,
     current_side: str,

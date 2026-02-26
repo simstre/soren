@@ -70,7 +70,7 @@ async def main():
 
             P(f"  [{done}/{total_configs}] Running SL={sl*100:.1f}% MH={mh}m ...")
 
-            r = await run(TICKERS, "refined_rsi_v8", stop_pct=sl)
+            r = await run(TICKERS, "rsi_divergence_pct", stop_pct=sl)
             if r:
                 row = {
                     "sl": sl, "mh": mh,
