@@ -18,7 +18,7 @@ class ScanConfig:
     sr_min_strength: int = 5
     max_hold_bars: int = 120
     cooldown_bars: int = 30
-    flip_signals: bool = False  # contrarian strategies (v6/v7)
+    flip_signals: bool = False
     # Percentage-based stops/targets (v8+). When use_pct_stops=True,
     # stop/target are computed from entry price × pct, ignoring ATR mults.
     use_pct_stops: bool = False
@@ -50,41 +50,6 @@ STRATEGIES: list[StrategyDef] = [
         description="Optimized for 1m candles on high-fitness tickers. Timeframe-adaptive RSI divergence + S/R proximity. ATR-based stops (2x) and targets (3x). Auto-scales RSI bands, cooldown, and hold limits. Best results at 30%+ position size on liquid, high-price names.",
         entry_rule="RSI div + S/R ≥3 + ATR stops + fitness-filtered tickers",
         scan_config=ScanConfig(),  # defaults = v1 params
-    ),
-    StrategyDef(
-        id="refined_rsi_v3",
-        name="RSI Divergence Smart v3",
-        description="Empirically optimized from 27-ticker analysis. Wider RSI bands (28-46/54-72), lower S/R threshold (>=3), tighter stops (1.5x ATR), wider targets (3.5x ATR), volume confirmation, morning session filter. Fewer filtered trades, better R:R.",
-        entry_rule="RSI div + S/R ≥3 + vol confirm + wider RSI bands + ATR 1.5/3.5",
-        scan_config=ScanConfig(atr_stop_mult=1.5, atr_target_mult=3.5, rsi_buy_hi=46, rsi_sell_lo=54, min_rsi_spread=5, sr_min_strength=3),
-    ),
-    StrategyDef(
-        id="refined_rsi_v4",
-        name="RSI Divergence Smart v4",
-        description="Bear-market-tuned variant of v1. Skips 2pm hour, wider short RSI band (56-70 vs 58-70), wider ATR target 3.5x. Contains directional bias — use v5 for direction-agnostic trading.",
-        entry_rule="RSI div + S/R ≥5 + skip 2pm + wider short band + ATR 2.0/3.5",
-        scan_config=ScanConfig(atr_target_mult=3.5),
-    ),
-    StrategyDef(
-        id="refined_rsi_v5",
-        name="RSI Divergence Smart v5",
-        description="Direction-agnostic improvement to v1. Wider ATR target 3.5x (was 3.0x) for better R:R on both longs and shorts equally. Symmetric RSI bands, no time-of-day bias, no directional skew.",
-        entry_rule="RSI div + S/R ≥5 + ATR 2.0/3.5",
-        scan_config=ScanConfig(atr_target_mult=3.5),
-    ),
-    StrategyDef(
-        id="refined_rsi_v7",
-        name="RSI Divergence Contrarian v7",
-        description="Contrarian momentum: flips v1's RSI divergence signals. When v1 detects reversal setups, v7 trades continuation. Stop=1.5x ATR, Target=5.0x ATR. Time-only exits (no RSI reversal). 24% WR but +0.40% over 15d with 0.48% DD.",
-        entry_rule="Contra RSI div + S/R ≥5 + ATR 1.5/5.0 + time-only exit",
-        scan_config=ScanConfig(atr_stop_mult=1.5, atr_target_mult=5.0, flip_signals=True),
-    ),
-    StrategyDef(
-        id="refined_rsi_v2",
-        name="RSI Divergence Smart v2",
-        description="Wider entry filters: RSI bands 28-48/52-72, S/R strength >= 3, min spread 5. More trades, tested against UNH/AAPL/GOOGL/MSFT/TSLA performance profile. ATR stops 1.8x, targets 3.5x.",
-        entry_rule="RSI div + S/R ≥3 + wider RSI bands + ATR stops",
-        scan_config=ScanConfig(atr_stop_mult=1.8, atr_target_mult=3.5, rsi_buy_hi=48, rsi_sell_lo=52, min_rsi_spread=5, sr_min_strength=3),
     ),
     StrategyDef(
         id="refined_rsi_v8",

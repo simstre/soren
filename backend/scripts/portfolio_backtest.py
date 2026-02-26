@@ -37,14 +37,7 @@ from app.engine.signal_generator import (
     check_reversal_signal,
     detect_rsi_divergence,
     generate_signals_refined_rsi,
-    generate_signals_refined_rsi_v2,
-    generate_signals_refined_rsi_v3,
-    generate_signals_refined_rsi_v4,
-    generate_signals_refined_rsi_v5,
-    generate_signals_refined_rsi_v6,
-    generate_signals_refined_rsi_v7,
     check_exit_refined_rsi,
-    check_exit_refined_rsi_v6,
     get_timeframe_params,
 )
 from app.engine.divergence_tracker import (
@@ -64,7 +57,7 @@ logger = structlog.get_logger()
 TICKERS = ["UNH", "AAPL", "GOOGL", "MSFT", "TSLA", "NVDA", "AMZN", "META", "PFE", "JPM"]
 POSITION_SIZES = [0.25]
 TIMEFRAME = "1m"
-STRATEGY = "refined_rsi_v7"
+STRATEGY = "refined_rsi"
 STARTING_BALANCE = 100_000.0
 MAX_EXPOSURE_PCT = 1.00  # 100% total exposure cap
 LOOKBACK_BARS = 200
@@ -321,16 +314,7 @@ async def _process_bar(
         analysis = run_analysis(symbol, df)
         close_prices = df["close"].tolist()
 
-        _signal_dispatch = {
-            "refined_rsi": generate_signals_refined_rsi,
-            "refined_rsi_v2": generate_signals_refined_rsi_v2,
-            "refined_rsi_v3": generate_signals_refined_rsi_v3,
-            "refined_rsi_v4": generate_signals_refined_rsi_v4,
-            "refined_rsi_v5": generate_signals_refined_rsi_v5,
-            "refined_rsi_v6": generate_signals_refined_rsi_v6,
-            "refined_rsi_v7": generate_signals_refined_rsi_v7,
-        }
-        gen_fn = _signal_dispatch.get(STRATEGY, generate_signals_refined_rsi)
+        gen_fn = generate_signals_refined_rsi
         signals = gen_fn(
             analysis, df,
             stop_loss_pct=0.0,  # ATR-based stops
@@ -360,15 +344,7 @@ async def _process_bar(
                 except (ValueError, TypeError):
                     pass
 
-            if STRATEGY in ("refined_rsi_v6", "refined_rsi_v7"):
-                reversal = check_exit_refined_rsi_v6(
-                    analysis, df, current_side,
-                    entry_time=entry_time,
-                    current_time=current_time,
-                    tf_params=tf_params,
-                )
-            else:
-                reversal = check_exit_refined_rsi(
+            reversal = check_exit_refined_rsi(
                     analysis, df, current_side,
                     entry_time=entry_time,
                     current_time=current_time,

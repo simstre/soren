@@ -56,7 +56,7 @@ async def run(symbols, strategy, days=29):
 
 async def main():
     tickers = ["PLTR", "TSLA", "NVDA", "CEG"]
-    strategies = ["refined_rsi", "refined_rsi_v5", "refined_rsi_v8"]
+    strategies = ["refined_rsi", "refined_rsi_v8"]
 
     print(f"{'Strategy':>20s} | {'Ticker':>8s} | {'P&L%':>9s} | {'P&L$':>11s} | {'Trades':>6s} | {'WR%':>6s} | {'DD%':>6s} | Exit Reasons")
     print("-" * 120)

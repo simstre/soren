@@ -52,7 +52,7 @@ async def main():
 
     baselines = {}
     for ticker in tickers:
-        for strat in ["refined_rsi", "refined_rsi_v5"]:
+        for strat in ["refined_rsi"]:
             r = await run([ticker], strat)
             if r:
                 pnl_sign = "+" if r.total_pnl_pct >= 0 else ""
@@ -165,7 +165,7 @@ async def main():
 
     # Also compare with best v1/v5 multi-ticker
     for name, symbols in [("v1 High ATR", ["CEG", "PLTR", "SOFI"]), ("v5 High ATR", ["CEG", "PLTR", "SOFI"])]:
-        strat = "refined_rsi" if "v1" in name else "refined_rsi_v5"
+        strat = "refined_rsi"
         r = await run(symbols, strat)
         if r:
             pnl_sign = "+" if r.total_pnl_pct >= 0 else ""
