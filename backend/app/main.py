@@ -107,12 +107,6 @@ class _TradingSettingsResponse(_BM):
     stop_loss_pct: float
 
 
-class _TradingSettingsUpdate(_BM):
-    max_position_pct: float | None = None
-    max_exposure_pct: float | None = None
-    risk_per_trade_pct: float | None = None
-    stop_loss_pct: float | None = None
-
 
 @app.get("/api/settings/trading", response_model=_TradingSettingsResponse)
 async def get_trading_settings():
@@ -124,22 +118,3 @@ async def get_trading_settings():
     )
 
 
-@app.patch("/api/settings/trading", response_model=_TradingSettingsResponse)
-async def update_trading_settings(body: _TradingSettingsUpdate):
-    if body.max_position_pct is not None:
-        settings.max_position_pct = body.max_position_pct
-        # Auto-scale exposure cap when position size changes and exposure not explicitly set
-        if body.max_exposure_pct is None:
-            settings.max_exposure_pct = min(1.0, body.max_position_pct * 5)
-    if body.max_exposure_pct is not None:
-        settings.max_exposure_pct = body.max_exposure_pct
-    if body.risk_per_trade_pct is not None:
-        settings.risk_per_trade_pct = body.risk_per_trade_pct
-    if body.stop_loss_pct is not None:
-        settings.stop_loss_pct = body.stop_loss_pct
-    return _TradingSettingsResponse(
-        max_position_pct=settings.max_position_pct,
-        max_exposure_pct=settings.max_exposure_pct,
-        risk_per_trade_pct=settings.risk_per_trade_pct,
-        stop_loss_pct=settings.stop_loss_pct,
-    )

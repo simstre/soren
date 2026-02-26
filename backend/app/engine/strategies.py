@@ -33,6 +33,11 @@ class StrategyDef:
     description: str
     entry_rule: str
     scan_config: ScanConfig = field(default_factory=ScanConfig)
+    # Trading parameters baked into each strategy
+    position_size_pct: float = 0.50
+    max_exposure_pct: float = 1.0
+    stop_loss_pct: float = 0.02
+    timeframe: str = "1m"
 
 
 # All available strategies.  Only the first is fully implemented;
@@ -90,6 +95,10 @@ STRATEGIES: list[StrategyDef] = [
             max_hold_bars=390, cooldown_bars=60,
             use_pct_stops=True, stop_pct=0.02, target_pct=0.06,
         ),
+        position_size_pct=0.50,
+        max_exposure_pct=1.0,
+        stop_loss_pct=0.02,
+        timeframe="1m",
     ),
     StrategyDef(
         id="rsi_divergence_sr",
@@ -126,6 +135,10 @@ def list_strategies() -> list[dict]:
             "name": s.name,
             "description": s.description,
             "entry_rule": s.entry_rule,
+            "timeframe": s.timeframe,
+            "position_size_pct": s.position_size_pct,
+            "stop_loss_pct": s.stop_loss_pct,
+            "max_exposure_pct": s.max_exposure_pct,
         }
         for s in STRATEGIES
     ]

@@ -2,15 +2,16 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.engine.trading_engine import get_engine
+from app.engine.strategies import get_strategy
 from app.api.rest.tickers import _tracked_tickers
 
 router = APIRouter(prefix="/api/engine", tags=["engine"])
 
 
 class EngineStartRequest(BaseModel):
-    timeframe: str = "5m"
-    strategy: str = "rsi_divergence_sr"
+    strategy: str = "refined_rsi_v8"
     tickers: list[str] | None = None
+    timeframe: str | None = None  # defaults to strategy's baked-in timeframe
 
 
 class EngineStatusResponse(BaseModel):
@@ -41,9 +42,12 @@ async def start_engine(req: EngineStartRequest | None = None):
         raise HTTPException(status_code=500, detail="Trading engine not initialized")
     if engine.state.running:
         return {"status": "already_running"}
+
+    strategy = req.strategy if req else "refined_rsi_v8"
+    sdef = get_strategy(strategy)
+    timeframe = (req.timeframe if req and req.timeframe else None) or (sdef.timeframe if sdef else "1m")
     tickers = (req.tickers if req and req.tickers else None) or _tracked_tickers or ["AAPL"]
-    timeframe = req.timeframe if req else "5m"
-    strategy = req.strategy if req else "rsi_divergence_sr"
+
     await engine.start(tickers, timeframe=timeframe, strategy=strategy)
     return {"status": "started", "tickers": tickers, "timeframe": timeframe, "strategy": strategy}
 

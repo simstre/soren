@@ -44,6 +44,7 @@ from app.engine.divergence_tracker import (
     DivergenceSignal,
     DivergenceTracker,
 )
+from app.engine.strategies import get_strategy
 from app.engine.risk_manager import validate_signal
 from app.api.ws.manager import ws_manager
 
@@ -141,6 +142,7 @@ class ReplayEngine:
         self._symbol_stats: dict[str, dict] = {}  # per-symbol {wins, losses}
         self._gated_symbols: set[str] = set()  # symbols disabled by performance gate
         self._tf_params: TimeframeParams | None = None
+        self._strategy_def = None
         self._headless: bool = False
 
     @property
@@ -159,14 +161,17 @@ class ReplayEngine:
         start_date: str = "",
         end_date: str = "",
         speed: float = 1.0,
-        stop_loss_pct: float = 0.02,
-        position_size_pct: float = 0.05,
+        stop_loss_pct: float | None = None,
+        position_size_pct: float | None = None,
         strategy: str = "rsi_divergence_sr",
         headless: bool = False,
         instant: bool = False,
     ) -> None:
         if self._running:
             await self.stop()
+
+        # Look up strategy definition for baked-in defaults
+        self._strategy_def = get_strategy(strategy)
 
         # Resolve symbols
         if symbols:
@@ -179,8 +184,10 @@ class ReplayEngine:
         self._symbol = self._symbols[0]  # primary for display
         self._timeframe = timeframe
         self._speed = speed
-        self._stop_loss_pct = stop_loss_pct
-        self._position_size_pct = position_size_pct
+        # Use caller's override if provided, otherwise fall back to strategy defaults
+        sdef = self._strategy_def
+        self._stop_loss_pct = stop_loss_pct if stop_loss_pct is not None else (sdef.stop_loss_pct if sdef else 0.02)
+        self._position_size_pct = position_size_pct if position_size_pct is not None else (sdef.position_size_pct if sdef else 0.05)
         self._strategy = strategy
         self._bar_index = 0
         self._trade_records = []
@@ -850,6 +857,7 @@ class ReplayEngine:
                     best_divergence=best_div,
                     current_timestamp=timestamp,
                     tf_params=self._tf_params,
+                    scan_config=self._strategy_def.scan_config if self._strategy_def else None,
                 )
             else:  # rsi_divergence_sr (default)
                 signals = generate_signals(
@@ -906,6 +914,7 @@ class ReplayEngine:
                     current_time=current_time,
                     tf_params=self._tf_params,
                     entry_price=entry_price,
+                    scan_config=self._strategy_def.scan_config if self._strategy_def else None,
                 )
             elif self._strategy in ("refined_rsi_v6", "refined_rsi_v7"):
                 reversal = check_exit_refined_rsi_v6(

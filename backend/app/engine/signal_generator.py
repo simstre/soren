@@ -1700,6 +1700,7 @@ def generate_signals_refined_rsi_v8(
     best_divergence: "DivergenceSignal | None" = None,
     current_timestamp: "datetime | None" = None,
     tf_params: "TimeframeParams | None" = None,
+    scan_config: "ScanConfig | None" = None,
 ) -> list[TradingSignal]:
     """Percentage-based stops/targets for 1m candles, extended holding.
 
@@ -1777,7 +1778,8 @@ def generate_signals_refined_rsi_v8(
         stop = round(price + stop_dist, 2)
 
     # --- Percentage-based target ---
-    target_dist = price * _V8_TARGET_PCT
+    _target_pct = (scan_config.target_pct if scan_config is not None else _V8_TARGET_PCT)
+    target_dist = price * _target_pct
 
     if div_side == "BUY":
         target = round(price + target_dist, 2)
@@ -1801,7 +1803,7 @@ def generate_signals_refined_rsi_v8(
 
     reason = (
         f"[{_setup_grade}] {best_sr.reason} + {best_divergence.description} ({best_divergence.timeframe}) "
-        f"[sp={best_divergence.rsi_spread:.0f}] [v8-pct SL={sl_pct*100:.1f}% T={_V8_TARGET_PCT*100:.1f}%]"
+        f"[sp={best_divergence.rsi_spread:.0f}] [v8-pct SL={sl_pct*100:.1f}% T={_target_pct*100:.1f}%]"
     )
 
     return [
@@ -1830,18 +1832,20 @@ def check_exit_refined_rsi_v8(
     current_time: datetime | None = None,
     tf_params: "TimeframeParams | None" = None,
     entry_price: float | None = None,
+    scan_config: "ScanConfig | None" = None,
 ) -> str | None:
     """Exit logic for v8 — time-based hold only, no trailing stops.
 
-    - Max hold: 1 trading day (390 min)
+    - Max hold: read from scan_config.max_hold_bars (default 390 min)
     - No EOD close (hold overnight)
     - No RSI reversal exit
     - No trailing stops (empirically hurt P&L due to intraday noise)
     - Only exits: max_hold timeout or stop_loss (handled by replay engine)
     """
+    max_hold = (scan_config.max_hold_bars if scan_config is not None else _V8_MAX_HOLD_MINUTES)
     if entry_time is not None and current_time is not None:
         held_minutes = (current_time - entry_time).total_seconds() / 60
-        if held_minutes >= _V8_MAX_HOLD_MINUTES:
+        if held_minutes >= max_hold:
             return "max_hold"
 
     return None

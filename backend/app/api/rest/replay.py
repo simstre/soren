@@ -11,13 +11,13 @@ router = APIRouter(prefix="/api/replay", tags=["replay"])
 class ReplayStartRequest(BaseModel):
     symbols: list[str] = []
     symbol: str | None = None  # backwards compat — single ticker fallback
-    timeframe: str = "5m"
+    timeframe: str = "1m"
     start_date: str
     end_date: str
     speed: float = 1.0
-    stop_loss_pct: float = 0.02  # 2% stop loss by default
-    position_size_pct: float = 0.05  # 5% of account per trade
-    strategy: str = "rsi_divergence_sr"
+    stop_loss_pct: float | None = None  # None → default from strategy
+    position_size_pct: float | None = None  # None → default from strategy
+    strategy: str = "refined_rsi_v8"
     instant: bool = True  # instant mode: skip candle broadcasts & sleep
 
 

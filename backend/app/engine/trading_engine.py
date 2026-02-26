@@ -19,8 +19,8 @@ from app.engine.signal_generator import (
     check_exit_refined_rsi_v8,
     detect_rsi_divergence,
     get_timeframe_params,
-    _V8_MAX_HOLD_MINUTES,
 )
+from app.engine.strategies import get_strategy, StrategyDef
 from app.engine.divergence_tracker import (
     DivergenceTracker,
     DivergenceSignal,
@@ -49,12 +49,16 @@ class TradingEngine:
         self._task: asyncio.Task | None = None
         self._trade_records: list[dict] = []
         self._divergence_tracker: DivergenceTracker | None = None
+        self._strategy_def: StrategyDef | None = None
 
     async def start(self, tickers: list[str], timeframe: str | None = None, strategy: str = "refined_rsi"):
         if self.state.running:
             return
 
-        tf = timeframe or settings.default_timeframe
+        # Look up strategy definition for baked-in params
+        self._strategy_def = get_strategy(strategy)
+
+        tf = timeframe or (self._strategy_def.timeframe if self._strategy_def else settings.default_timeframe)
         self.state.start(tickers, timeframe=tf, strategy=strategy)
 
         # Set up divergence tracker for strategies that need it
@@ -168,7 +172,8 @@ class TradingEngine:
 
         # 4. Strategy dispatch
         strategy = self.state.strategy
-        stop_loss_pct = settings.stop_loss_pct or None
+        sdef = self._strategy_def
+        stop_loss_pct = sdef.stop_loss_pct if sdef else (settings.stop_loss_pct or None)
 
         if strategy == "refined_rsi_v8":
             best_div = self._get_divergence(analysis, df)
@@ -180,6 +185,7 @@ class TradingEngine:
                 best_divergence=best_div,
                 current_timestamp=timestamp,
                 tf_params=tf_params,
+                scan_config=sdef.scan_config if sdef else None,
             )
         elif strategy == "refined_rsi":
             best_div = self._get_divergence(analysis, df)
@@ -211,7 +217,9 @@ class TradingEngine:
         return signals
 
     async def _enforce_max_hold(self):
-        """Close positions that have exceeded v8's max hold time (390 min)."""
+        """Close positions that have exceeded v8's max hold time."""
+        sdef = self._strategy_def
+        max_hold = sdef.scan_config.max_hold_bars if sdef else 390
         now = datetime.now(timezone.utc)
         for record in self._trade_records:
             if record["status"] != "OPEN":
@@ -222,7 +230,7 @@ class TradingEngine:
             if isinstance(entry_time, str):
                 entry_time = datetime.fromisoformat(entry_time)
             held_minutes = (now - entry_time).total_seconds() / 60
-            if held_minutes >= _V8_MAX_HOLD_MINUTES:
+            if held_minutes >= max_hold:
                 try:
                     close_oid = await self.broker.close_position(record["symbol"])
                     record["status"] = "CLOSED"
@@ -284,11 +292,14 @@ class TradingEngine:
                 confidence=signal.confidence,
             )
 
-            # Risk validation with position size from settings
+            # Risk validation with position size from strategy (fallback to settings)
+            sdef = self._strategy_def
+            pos_pct = sdef.position_size_pct if sdef else settings.max_position_pct
+            exp_pct = sdef.max_exposure_pct if sdef else settings.max_exposure_pct
             decision = validate_signal(
                 signal, balance, buying_power, open_symbols, total_exposure,
-                position_size_pct=settings.max_position_pct,
-                max_exposure_pct=settings.max_exposure_pct,
+                position_size_pct=pos_pct,
+                max_exposure_pct=exp_pct,
             )
 
             if not decision.approved:
