@@ -2,6 +2,8 @@
 
 Soren is an automated stock trading platform that combines real-time technical analysis with algorithmic signal generation and execution. It features a Python backend powered by FastAPI and an interactive Next.js dashboard with live candlestick charting, strategy management, and a full replay/backtesting engine.
 
+<img width="1726" height="929" alt="image" src="https://github.com/user-attachments/assets/2e491bb5-4bdb-4944-9c30-88792c4be2ae" />
+
 ---
 
 ## Table of Contents
