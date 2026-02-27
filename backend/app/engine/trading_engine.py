@@ -30,6 +30,7 @@ from app.engine.risk_manager import validate_signal
 from app.engine.state import EngineState
 from app.api.ws.manager import ws_manager
 from app.config import settings
+from app.db.trade_repo import save_trade, update_trade, load_all_trades
 
 logger = structlog.get_logger()
 
@@ -54,6 +55,13 @@ class TradingEngine:
     async def start(self, tickers: list[str], timeframe: str | None = None, strategy: str = "refined_rsi"):
         if self.state.running:
             return
+
+        # Load historical trades from DB
+        try:
+            self._trade_records = await load_all_trades()
+            logger.info("loaded_trade_history", count=len(self._trade_records))
+        except Exception as e:
+            logger.error("load_trades_failed", error=str(e))
 
         # Look up strategy definition for baked-in params
         self._strategy_def = get_strategy(strategy)
@@ -88,12 +96,9 @@ class TradingEngine:
             order_ids = await self.broker.close_all_positions()
             if order_ids:
                 logger.info("positions_closed_on_stop", count=len(order_ids), order_ids=order_ids)
-                now = datetime.now(timezone.utc).isoformat()
                 for record in self._trade_records:
                     if record["status"] == "OPEN":
-                        record["status"] = "CLOSED"
-                        record["exit_time"] = now
-                        record["updated_at"] = now
+                        await self._close_trade_record(record, "engine_stop")
                 await ws_manager.broadcast("positions_update", [])
         except Exception as e:
             logger.error("close_positions_on_stop_failed", error=str(e))
@@ -216,6 +221,44 @@ class TradingEngine:
 
         return signals
 
+    async def _close_trade_record(self, record: dict, exit_reason: str):
+        """Fill exit_price, pnl, pnl_pct on a trade record being closed."""
+        now = datetime.now(timezone.utc).isoformat()
+        record["status"] = "CLOSED"
+        record["exit_time"] = now
+        record["exit_reason"] = exit_reason
+        record["updated_at"] = now
+
+        # Fetch current price for P&L calculation
+        try:
+            exit_price = await self.broker.get_current_price(record["symbol"])
+            record["exit_price"] = round(exit_price, 2)
+            entry = record["entry_price"]
+            qty = record["quantity"]
+            if record["side"] == "BUY":
+                pnl = round((exit_price - entry) * qty, 2)
+            else:
+                pnl = round((entry - exit_price) * qty, 2)
+            pnl_pct = round(pnl / (entry * qty) * 100, 2) if entry else 0.0
+            record["pnl"] = pnl
+            record["pnl_pct"] = pnl_pct
+        except Exception as e:
+            logger.error("exit_price_fetch_failed", symbol=record["symbol"], error=str(e))
+
+        # Persist to DB
+        if record.get("db_id"):
+            try:
+                await update_trade(record["db_id"], {
+                    "status": record["status"],
+                    "exit_time": record["exit_time"],
+                    "exit_reason": exit_reason,
+                    "exit_price": record.get("exit_price"),
+                    "pnl": record.get("pnl"),
+                    "pnl_pct": record.get("pnl_pct"),
+                })
+            except Exception as e:
+                logger.error("update_trade_failed", db_id=record["db_id"], error=str(e))
+
     async def _enforce_max_hold(self):
         """Close positions that have exceeded v8's max hold time."""
         sdef = self._strategy_def
@@ -233,11 +276,8 @@ class TradingEngine:
             if held_minutes >= max_hold:
                 try:
                     close_oid = await self.broker.close_position(record["symbol"])
-                    record["status"] = "CLOSED"
-                    record["exit_time"] = now.isoformat()
-                    record["exit_reason"] = "max_hold"
-                    record["updated_at"] = now.isoformat()
-                    logger.info("max_hold_exit", symbol=record["symbol"], held_minutes=round(held_minutes), close_order_id=close_oid)
+                    await self._close_trade_record(record, "max_hold")
+                    logger.info("max_hold_exit", symbol=record["symbol"], held_minutes=round(held_minutes), pnl=record.get("pnl"), close_order_id=close_oid)
                     await ws_manager.broadcast("trade_closed", record)
                 except Exception as e:
                     logger.error("max_hold_close_failed", symbol=record["symbol"], error=str(e))
@@ -345,7 +385,19 @@ class TradingEngine:
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
 
+                # Add strategy metadata
+                trade_record["strategy"] = self.state.strategy
+                trade_record["divergence_timeframe"] = self.state.timeframe
+
                 self._trade_records.append(trade_record)
+
+                # Persist to DB
+                try:
+                    db_id = await save_trade(trade_record)
+                    trade_record["db_id"] = db_id
+                except Exception as e:
+                    logger.error("save_trade_failed", symbol=signal.symbol, error=str(e))
+
                 await ws_manager.broadcast("trade_opened", trade_record)
 
                 logger.info(

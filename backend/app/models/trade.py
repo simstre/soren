@@ -23,6 +23,9 @@ class Trade(Base):
     pnl_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     reason: Mapped[str] = mapped_column(String(200))
     status: Mapped[str] = mapped_column(String(10), default="OPEN")  # OPEN, CLOSED, CANCELLED
+    exit_reason: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    strategy: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    divergence_timeframe: Mapped[str | None] = mapped_column(String(10), nullable=True)
     ib_order_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
     signal_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("signals.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

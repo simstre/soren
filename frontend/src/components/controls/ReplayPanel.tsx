@@ -97,7 +97,7 @@ export function ReplayPanel() {
 
   const [startDate, setStartDate] = useState(() => getDefaultDateRange("1m").start);
   const [endDate, setEndDate] = useState(() => getDefaultDateRange("1m").end);
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   const [activePeriod, setActivePeriod] = useState<string | null>(() => getDefaultPeriodLabel("1m"));
   const [scanningTickers, setScanningTickers] = useState(false);
 
@@ -154,11 +154,11 @@ export function ReplayPanel() {
   };
 
   return (
-    <div className="border-b border-zinc-800">
+    <div className="border-t border-zinc-800">
       {/* Header */}
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full px-4 py-2.5 flex items-center justify-between text-sm font-medium text-zinc-300 hover:text-zinc-100 transition-colors"
+        className="w-full px-3 py-2.5 flex items-center justify-between text-sm font-medium text-zinc-300 hover:text-zinc-100 transition-colors"
       >
         <span className="flex items-center gap-2">
           <RotateCcw size={14} className="text-blue-400" />
@@ -168,7 +168,7 @@ export function ReplayPanel() {
       </button>
 
       {expanded && (
-        <div className="px-4 pb-3 space-y-3">
+        <div className="px-3 pb-3 space-y-2.5">
           {/* Config (hide when running or showing results) */}
           {!isRunning && !results && (
             <>

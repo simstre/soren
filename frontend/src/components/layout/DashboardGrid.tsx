@@ -1,11 +1,11 @@
 "use client";
 
 import { ChartContainer } from "@/components/chart/ChartContainer";
+import { TradingControls } from "@/components/controls/TradingControls";
+import { ReplayPanel } from "@/components/controls/ReplayPanel";
 import { InfoPanel } from "@/components/metrics/InfoPanel";
 import { CurrentPositions } from "@/components/positions/CurrentPositions";
 import { TradeHistory } from "@/components/trades/TradeHistory";
-import { ReplayPanel } from "@/components/controls/ReplayPanel";
-
 export function DashboardGrid() {
   return (
     <div className="flex-1 min-w-0 overflow-hidden flex">
@@ -24,6 +24,7 @@ export function DashboardGrid() {
 
       {/* Right column: fixed width, never resizes */}
       <div className="w-[380px] shrink-0 border-l border-zinc-800 flex flex-col min-h-0 overflow-y-auto">
+        <TradingControls />
         <ReplayPanel />
         <InfoPanel />
         <CurrentPositions />

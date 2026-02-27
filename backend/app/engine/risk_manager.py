@@ -84,6 +84,16 @@ def validate_signal(
                 reason="Calculated position size is zero",
             )
 
+        # Reject tiny positions (< 10% of intended size) that slip through rounding
+        intended_value = account_balance * position_size_pct
+        actual_value = quantity * signal.entry_price
+        if actual_value < intended_value * 0.10:
+            return RiskDecision(
+                approved=False,
+                quantity=0,
+                reason=f"Position too small (${actual_value:.0f} < 10% of ${intended_value:.0f})",
+            )
+
         logger.info(
             "risk_approved_fixed_size",
             symbol=signal.symbol,

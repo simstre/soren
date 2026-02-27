@@ -32,6 +32,17 @@ async def lifespan(app: FastAPI):
     await broker.connect()
     logger.info("broker_connected", mode=settings.broker_mode)
 
+    # Snapshot IB balance on first connect
+    from app.db.account_repo import save_snapshot, get_starting_balance
+    starting = broker.get_starting_balance()
+    if starting and starting > 0:
+        existing = await get_starting_balance(settings.broker_mode)
+        if existing is None:
+            await save_snapshot(settings.broker_mode, starting)
+            logger.info("initial_balance_snapshot", balance=starting)
+        else:
+            logger.info("starting_balance_from_db", balance=existing)
+
     trading_engine = TradingEngine(broker)
     set_engine(trading_engine)
     logger.info("trading_engine_ready")

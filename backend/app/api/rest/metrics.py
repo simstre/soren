@@ -4,6 +4,7 @@ from app.schemas.metrics import PerformanceMetrics
 from app.config import settings
 from app.dependencies import get_broker
 from app.engine.trading_engine import get_engine
+from app.db.account_repo import get_starting_balance
 
 router = APIRouter(prefix="/api/metrics", tags=["metrics"])
 
@@ -13,8 +14,9 @@ async def get_metrics():
     broker = get_broker()
     engine = get_engine()
 
-    # Get balance from broker
+    # Get balance from broker; use DB snapshot as starting balance
     current_balance = settings.starting_balance
+    starting_balance = await get_starting_balance(settings.broker_mode) or settings.starting_balance
     if await broker.is_connected():
         try:
             current_balance = await broker.get_account_balance()
@@ -29,8 +31,8 @@ async def get_metrics():
     wins = [t for t in closed_trades if (t.get("pnl") or 0) > 0]
     losses = [t for t in closed_trades if (t.get("pnl") or 0) < 0]
 
-    total_pnl = current_balance - settings.starting_balance
-    total_pnl_pct = (total_pnl / settings.starting_balance * 100) if settings.starting_balance > 0 else 0
+    total_pnl = current_balance - starting_balance
+    total_pnl_pct = (total_pnl / starting_balance * 100) if starting_balance > 0 else 0
 
     win_rate = (len(wins) / len(closed_trades) * 100) if closed_trades else 0
 
@@ -54,7 +56,7 @@ async def get_metrics():
     profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else 0
 
     return PerformanceMetrics(
-        starting_balance=settings.starting_balance,
+        starting_balance=round(starting_balance, 2),
         current_balance=round(current_balance, 2),
         total_pnl=round(total_pnl, 2),
         total_pnl_pct=round(total_pnl_pct, 2),

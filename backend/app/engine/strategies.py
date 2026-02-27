@@ -54,10 +54,10 @@ STRATEGIES: list[StrategyDef] = [
     StrategyDef(
         id="rsi_divergence_pct",
         name="RSI Divergence PCT",
-        description="Percentage-based stops/targets (2% SL, 6% target) instead of ATR-based. 3h max hold (180 bars), no RSI reversal exit, no trailing stops. Designed for 1m candles where ATR-based stops are too tight.",
+        description="Percentage-based stops/targets (2% SL, 6% target) instead of ATR-based. 1-day max hold (390 bars), no RSI reversal exit, no trailing stops. Designed for 1m candles where ATR-based stops are too tight.",
         entry_rule="RSI div + S/R ≥5 + vol confirm + pct stops + extended hold",
         scan_config=ScanConfig(
-            max_hold_bars=180, cooldown_bars=60,
+            max_hold_bars=390, cooldown_bars=60,
             use_pct_stops=True, stop_pct=0.02, target_pct=0.06,
         ),
         position_size_pct=0.50,

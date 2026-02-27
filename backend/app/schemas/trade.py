@@ -18,6 +18,9 @@ class TradeRead(BaseModel):
     pnl_pct: float | None
     reason: str
     status: str
+    exit_reason: str | None = None
+    strategy: str | None = None
+    divergence_timeframe: str | None = None
     ib_order_id: str | None
     signal_id: int | None
     created_at: datetime

@@ -660,9 +660,9 @@ class ReplayEngine:
                     if self._cooldown_bars.get(sym, 0) > 0:
                         self._cooldown_bars[sym] -= 1
 
-                    # Run analysis + signals
+                    # Run analysis + signals (full window, no .copy() to avoid O(n²) allocation)
                     if bar_pos >= min_bars:
-                        window_df = df.iloc[: bar_pos + 1].copy()
+                        window_df = df.iloc[: bar_pos + 1]
                         signals = self._generate_signals_for_bar(
                             sym, window_df, timestamp, close_price,
                         )
@@ -713,6 +713,22 @@ class ReplayEngine:
             self._results = self._build_results(equity_curve)
 
             if not headless:
+                # Broadcast final positions so UI can display them
+                positions = await self.broker.get_positions()
+                await ws_manager.broadcast("replay_positions", {
+                    "positions": [
+                        {
+                            "symbol": p.symbol,
+                            "quantity": abs(p.quantity),
+                            "avg_cost": p.avg_cost,
+                            "current_price": p.current_price,
+                            "unrealized_pnl": p.unrealized_pnl,
+                            "unrealized_pnl_pct": p.unrealized_pnl_pct,
+                            "market_value": p.market_value,
+                        }
+                        for p in positions
+                    ]
+                })
                 await ws_manager.broadcast("replay_complete", {
                     "results": self._results.to_dict(),
                 })

@@ -17,6 +17,9 @@ class IBAdapter(BrokerAdapter):
     def __init__(self):
         self._ib = None
         self._subscriptions: dict[str, object] = {}
+        self._account: str = ""
+        self._currency: str = "USD"  # detected from account on connect
+        self._initial_balance: float = 0.0  # captured on connect
 
     async def connect(self) -> None:
         try:
@@ -27,7 +30,20 @@ class IBAdapter(BrokerAdapter):
                 port=settings.ib_port,
                 clientId=settings.ib_client_id,
             )
-            logger.info("ib_connected", host=settings.ib_host, port=settings.ib_port)
+            accounts = self._ib.managedAccounts()
+            self._account = accounts[0] if accounts else ""
+            # Detect account base currency from populated account values
+            for av in self._ib.accountValues():
+                if av.tag == "NetLiquidation" and av.currency not in ("", "BASE"):
+                    self._currency = av.currency
+                    break
+            # Capture initial balance for P&L calculation
+            self._initial_balance = await self.get_account_balance()
+            logger.info(
+                "ib_connected", host=settings.ib_host, port=settings.ib_port,
+                account=self._account, currency=self._currency,
+                balance=self._initial_balance,
+            )
         except Exception as e:
             logger.error("ib_connection_failed", error=str(e))
             raise
@@ -39,6 +55,9 @@ class IBAdapter(BrokerAdapter):
 
     async def is_connected(self) -> bool:
         return self._ib is not None and self._ib.isConnected()
+
+    def get_starting_balance(self) -> float | None:
+        return self._initial_balance if self._initial_balance > 0 else None
 
     async def place_order(
         self,
@@ -148,16 +167,14 @@ class IBAdapter(BrokerAdapter):
         return result
 
     async def get_account_balance(self) -> float:
-        account_values = self._ib.accountValues()
-        for av in account_values:
-            if av.tag == "NetLiquidation" and av.currency == "USD":
+        for av in self._ib.accountValues():
+            if av.tag == "NetLiquidation" and av.currency == self._currency:
                 return float(av.value)
         return 0.0
 
     async def get_buying_power(self) -> float:
-        account_values = self._ib.accountValues()
-        for av in account_values:
-            if av.tag == "BuyingPower" and av.currency == "USD":
+        for av in self._ib.accountValues():
+            if av.tag == "BuyingPower" and av.currency == self._currency:
                 return float(av.value)
         return 0.0
 

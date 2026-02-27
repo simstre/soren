@@ -54,10 +54,7 @@ export function usePositions() {
       }
     }
 
-    // Clear replay positions when replay completes
-    if (msg.type === "replay_complete") {
-      setReplayPositions([]);
-    }
+    // Keep replay positions visible after completion (cleared on next start)
   }, []);
 
   useWebSocket(handleWS);

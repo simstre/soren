@@ -75,6 +75,10 @@ class BrokerAdapter(ABC):
         """Get the current market price for a symbol."""
         ...
 
+    def get_starting_balance(self) -> float | None:
+        """Return the balance captured at connect time, or None if unavailable."""
+        return None
+
     async def close_position(self, symbol: str) -> str | None:
         """Close a single open position by symbol. Returns order ID or None."""
         positions = await self.get_positions()
