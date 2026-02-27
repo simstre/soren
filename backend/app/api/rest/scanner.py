@@ -50,13 +50,18 @@ class FitnessResultResponse(BaseModel):
 async def scan_fitness(
     top_n: int = Query(15, ge=1, le=50),
     strategy: str = Query("refined_rsi", description="Strategy ID for scanning parameters"),
+    scan_tactic: str = Query("watchlist", description="Scan tactic: 'watchlist' or 'market_scan'"),
 ):
     """Run strategy-fitness scan and return scored tickers."""
-    scan_config: ScanConfig | None = None
-    strat = STRATEGY_MAP.get(strategy)
-    if strat is not None:
-        scan_config = strat.scan_config
-    results = await run_fitness_scan(top_n=top_n, scan_config=scan_config)
+    if scan_tactic == "market_scan":
+        from app.scanner.percentile_scanner import run_percentile_scan
+        results = await run_percentile_scan(top_n=top_n)
+    else:
+        scan_config: ScanConfig | None = None
+        strat = STRATEGY_MAP.get(strategy)
+        if strat is not None:
+            scan_config = strat.scan_config
+        results = await run_fitness_scan(top_n=top_n, scan_config=scan_config)
     return [
         FitnessResultResponse(
             symbol=r.symbol,

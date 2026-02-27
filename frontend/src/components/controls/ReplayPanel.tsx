@@ -85,7 +85,10 @@ export function ReplayPanel() {
   const { status, results, loading, start, stop, clearResults } =
     useReplay();
   const selectedTicker = useAppStore((s) => s.selectedTicker);
+  const setSelectedTicker = useAppStore((s) => s.setSelectedTicker);
   const selectedStrategy = useAppStore((s) => s.selectedStrategy);
+  const scanTactic = useAppStore((s) => s.scanTactic);
+  const setScanTactic = useAppStore((s) => s.setScanTactic);
 
   // Fetch strategies to get the selected one's timeframe
   const [strategies, setStrategies] = useState<Strategy[]>([]);
@@ -131,13 +134,18 @@ export function ReplayPanel() {
     setScanningTickers(true);
     let symbols: string[];
     try {
-      const results = await api.scanFitness(10, selectedStrategy);
+      const results = await api.scanFitness(4, selectedStrategy, scanTactic);
       symbols = results.map((r) => r.symbol);
       if (symbols.length === 0) symbols = [selectedTicker];
     } catch {
       symbols = [selectedTicker];
     }
     setScanningTickers(false);
+
+    // Set chart to first replay symbol so candles appear
+    if (symbols.length > 0) {
+      setSelectedTicker(symbols[0]);
+    }
 
     await start({
       symbols,
@@ -172,6 +180,27 @@ export function ReplayPanel() {
           {/* Config (hide when running or showing results) */}
           {!isRunning && !results && (
             <>
+              {/* Scan tactic toggle */}
+              <div>
+                <label className="block text-xs text-zinc-500 mb-1">Scan Tactic</label>
+                <div className="flex gap-1">
+                  {([{ value: "watchlist", label: "Watchlist" }, { value: "market_scan", label: "Market Scan" }] as const).map((t) => (
+                    <button
+                      key={t.value}
+                      onClick={() => setScanTactic(t.value)}
+                      className={clsx(
+                        "flex-1 py-1 text-xs rounded transition-colors",
+                        scanTactic === t.value
+                          ? "bg-blue-500/20 text-blue-400 border border-blue-500/30"
+                          : "bg-zinc-900 text-zinc-400 border border-zinc-700 hover:border-zinc-600"
+                      )}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {/* Period presets */}
               <div>
                 <label className="block text-xs text-zinc-500 mb-1">

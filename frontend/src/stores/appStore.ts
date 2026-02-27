@@ -10,6 +10,7 @@ interface AppState {
   selectedTradeId: number | null;
   selectedTrade: import("@/lib/types").Trade | null;
   selectedStrategy: string;
+  scanTactic: "watchlist" | "market_scan";
   setSelectedTicker: (ticker: string) => void;
   setTimeframe: (tf: string) => void;
   setEngineRunning: (running: boolean) => void;
@@ -19,6 +20,7 @@ interface AppState {
   setSelectedTradeId: (id: number | null) => void;
   setSelectedTrade: (trade: import("@/lib/types").Trade | null) => void;
   setSelectedStrategy: (strategy: string) => void;
+  setScanTactic: (tactic: "watchlist" | "market_scan") => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -31,6 +33,7 @@ export const useAppStore = create<AppState>((set) => ({
   selectedTradeId: null,
   selectedTrade: null,
   selectedStrategy: "rsi_divergence_pct",
+  scanTactic: "watchlist",
   setSelectedTicker: (ticker) => set({ selectedTicker: ticker }),
   setTimeframe: (tf) => set({ timeframe: tf }),
   setEngineRunning: (running) => set({ engineRunning: running }),
@@ -40,4 +43,5 @@ export const useAppStore = create<AppState>((set) => ({
   setSelectedTradeId: (id) => set({ selectedTradeId: id }),
   setSelectedTrade: (trade) => set({ selectedTrade: trade }),
   setSelectedStrategy: (strategy) => set({ selectedStrategy: strategy }),
+  setScanTactic: (tactic) => set({ scanTactic: tactic }),
 }));

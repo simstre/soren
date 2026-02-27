@@ -161,14 +161,15 @@ async def _phase1_daily_filter(
     top_n: int = 40,
     scan_config: ScanConfig | None = None,
 ) -> list[tuple[str, float, int, float, pd.Series | None]]:
-    """Fetch daily data, apply hard disqualifiers.
+    """Batch-download daily data for full universe, apply hard disqualifiers.
 
-    Hard disqualifiers: price < $10, volume < 500K, ATR% > 7%.
-    For pct-based strategies (v8+): also require ATR% >= 2.5% — low-range
-    tickers can't generate enough movement for 1-day holds to profit.
+    Hard disqualifiers: price < $10, volume < 500K, ATR% > max.
+    For pct-based strategies (v8+): also require ATR% >= 2.5%.
     Returns list of (symbol, price, avg_volume, atr_pct, daily_returns).
     """
     min_atr_pct = 2.5 if (scan_config and scan_config.use_pct_stops) else 0
+    max_atr_pct = 12 if (scan_config and scan_config.use_pct_stops) else 7
+
     candidates: list[tuple[str, float, int, float, pd.Series | None]] = []
 
     for symbol in universe:
@@ -196,11 +197,7 @@ async def _phase1_daily_filter(
             # Hard disqualifiers: price < $10, volume < 500K
             if price < 10 or avg_volume < 500_000:
                 continue
-            # ATR cap: 7% for default strategies, 12% for v8 (high vol is good)
-            max_atr_pct = 12 if (scan_config and scan_config.use_pct_stops) else 7
-            if atr_pct > max_atr_pct:
-                continue
-            if atr_pct < min_atr_pct:
+            if atr_pct > max_atr_pct or atr_pct < min_atr_pct:
                 continue
 
             daily_returns = df["close"].pct_change()
