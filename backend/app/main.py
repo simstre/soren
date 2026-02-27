@@ -30,8 +30,11 @@ async def lifespan(app: FastAPI):
     from app.dependencies import get_broker
     from app.engine.trading_engine import TradingEngine, set_engine
     broker = get_broker()
-    await broker.connect()
-    logger.info("broker_connected", mode=settings.broker_mode)
+    try:
+        await broker.connect()
+        logger.info("broker_connected", mode=settings.broker_mode)
+    except Exception as e:
+        logger.warning("broker_connect_failed", mode=settings.broker_mode, error=str(e))
 
     # Snapshot IB balance on first connect
     from app.db.account_repo import save_snapshot, get_starting_balance

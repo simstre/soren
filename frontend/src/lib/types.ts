@@ -40,6 +40,7 @@ export interface CandleData {
 }
 
 export interface PerformanceMetrics {
+  broker_connected: boolean;
   starting_balance: number;
   current_balance: number;
   total_pnl: number;

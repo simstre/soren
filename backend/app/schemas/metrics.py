@@ -2,6 +2,7 @@ from pydantic import BaseModel
 
 
 class PerformanceMetrics(BaseModel):
+    broker_connected: bool
     starting_balance: float
     current_balance: float
     total_pnl: float

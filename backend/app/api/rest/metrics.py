@@ -8,20 +8,26 @@ from app.db.account_repo import get_starting_balance
 
 router = APIRouter(prefix="/api/metrics", tags=["metrics"])
 
+# Cache last known balance from TWS so it persists across disconnects
+_balance_cache: dict[str, float] = {}
+
 
 @router.get("", response_model=PerformanceMetrics)
 async def get_metrics():
     broker = get_broker()
     engine = get_engine()
 
-    # Get balance from broker; use DB snapshot as starting balance
-    current_balance = settings.starting_balance
+    # Get balance from broker; cache last known value
+    broker_connected = await broker.is_connected()
     starting_balance = await get_starting_balance(settings.broker_mode) or settings.starting_balance
-    if await broker.is_connected():
+    if broker_connected:
         try:
-            current_balance = await broker.get_account_balance()
+            live_balance = await broker.get_account_balance()
+            if live_balance and live_balance > 0:
+                _balance_cache["value"] = live_balance
         except Exception:
             pass
+    current_balance = _balance_cache.get("value", starting_balance)
 
     # Compute metrics from trade records
     trades = engine.get_trade_records() if engine else []
@@ -56,6 +62,7 @@ async def get_metrics():
     profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else 0
 
     return PerformanceMetrics(
+        broker_connected=broker_connected,
         starting_balance=round(starting_balance, 2),
         current_balance=round(current_balance, 2),
         total_pnl=round(total_pnl, 2),
