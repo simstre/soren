@@ -81,7 +81,8 @@ export function useReplay() {
 
   const clearResults = useCallback(() => {
     setResults(null);
-  }, []);
+    setReplayMode(false);
+  }, [setReplayMode]);
 
   // WebSocket listeners
   const handleWS = useCallback(
@@ -92,10 +93,10 @@ export function useReplay() {
       if (msg.type === "replay_complete") {
         const data = msg.payload as { results: ReplayResults };
         setResults(data.results);
-        setReplayMode(false);
+        // Keep replayMode=true so positions/trades panels keep showing backtest data
       }
     },
-    [setReplayMode]
+    []
   );
 
   useWebSocket(handleWS);

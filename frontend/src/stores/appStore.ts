@@ -9,8 +9,10 @@ interface AppState {
   performanceTab: "live" | "backtest";
   selectedTradeId: number | null;
   selectedTrade: import("@/lib/types").Trade | null;
+  activeTickers: string[];
   selectedStrategy: string;
   scanTactic: "watchlist" | "market_scan";
+  setActiveTickers: (tickers: string[]) => void;
   setSelectedTicker: (ticker: string) => void;
   setTimeframe: (tf: string) => void;
   setEngineRunning: (running: boolean) => void;
@@ -32,8 +34,10 @@ export const useAppStore = create<AppState>((set) => ({
   performanceTab: "live",
   selectedTradeId: null,
   selectedTrade: null,
+  activeTickers: [],
   selectedStrategy: "rsi_divergence_pct",
-  scanTactic: "watchlist",
+  scanTactic: "market_scan",
+  setActiveTickers: (tickers) => set({ activeTickers: tickers }),
   setSelectedTicker: (ticker) => set({ selectedTicker: ticker }),
   setTimeframe: (tf) => set({ timeframe: tf }),
   setEngineRunning: (running) => set({ engineRunning: running }),

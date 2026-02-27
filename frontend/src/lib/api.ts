@@ -2,6 +2,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
+    cache: "no-store",
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -38,9 +39,10 @@ export const api = {
   getMetrics: () => fetchApi<import("./types").PerformanceMetrics>("/api/metrics"),
 
   // Candles
-  getCandles: (symbol: string, timeframe = "5m", limit = 100, end?: string) => {
+  getCandles: (symbol: string, timeframe = "5m", limit = 100, end?: string, bustCache = false) => {
     let url = `/api/candles/${symbol}?timeframe=${timeframe}&limit=${limit}`;
     if (end) url += `&end=${encodeURIComponent(end)}`;
+    if (bustCache) url += `&_t=${Date.now()}`;
     return fetchApi<import("./types").CandleData[]>(url);
   },
 

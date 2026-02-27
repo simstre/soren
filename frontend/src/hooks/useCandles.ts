@@ -5,6 +5,51 @@ import { api } from "@/lib/api";
 import { useWebSocket } from "./useWebSocket";
 import type { CandleData, WSMessage } from "@/lib/types";
 
+/** Merge a candle into the array: update-in-place if same timestamp, else append. */
+function mergeCandle(prev: CandleData[], candle: CandleData): CandleData[] {
+  if (prev.length === 0) return [candle];
+
+  const last = prev[prev.length - 1];
+  if (last.timestamp === candle.timestamp) {
+    // Update the current bar in-place
+    const updated = [...prev];
+    updated[updated.length - 1] = candle;
+    return updated;
+  }
+
+  // New bar — append (with cap)
+  if (prev.length > 2000) {
+    return [...prev.slice(-1500), candle];
+  }
+  return [...prev, candle];
+}
+
+/** Merge multiple candles (e.g. from a poll) into the existing array. */
+function mergeCandles(prev: CandleData[], incoming: CandleData[]): CandleData[] {
+  if (incoming.length === 0) return prev;
+
+  const existingTimes = new Set(prev.map((c) => c.timestamp));
+  let result = prev;
+
+  for (const candle of incoming) {
+    const last = result[result.length - 1];
+    if (last && last.timestamp === candle.timestamp) {
+      // Update current bar
+      result = [...result.slice(0, -1), candle];
+    } else if (!existingTimes.has(candle.timestamp)) {
+      // Genuinely new bar
+      result = [...result, candle];
+    }
+  }
+
+  if (result.length > 2000) {
+    return result.slice(-1500);
+  }
+  return result;
+}
+
+const POLL_INTERVAL_MS = 5_000; // poll every 5s for live chart updates
+
 export function useCandles(symbol: string, timeframe = "5m") {
   const [candles, setCandles] = useState<CandleData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,6 +98,23 @@ export function useCandles(symbol: string, timeframe = "5m") {
     };
   }, [symbol, timeframe]);
 
+  // Poll for latest candles so the chart stays live for any ticker
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        // Fetch the latest 2 candles to get current + potentially new bar
+        const latest = await api.getCandles(symbol, timeframe, 2, undefined, true);
+        if (latest.length > 0) {
+          setCandles((prev) => mergeCandles(prev, latest));
+        }
+      } catch {
+        // Silently ignore poll failures
+      }
+    }, POLL_INTERVAL_MS);
+
+    return () => clearInterval(interval);
+  }, [symbol, timeframe]);
+
   // Load older candles — stable callback using refs
   const loadMore = useCallback(async () => {
     if (loadingMoreRef.current || noMoreDataRef.current) return;
@@ -91,12 +153,21 @@ export function useCandles(symbol: string, timeframe = "5m") {
     (msg: WSMessage) => {
       if (msg.type === "candle_update" && msg.payload.symbol === symbol) {
         const candle = msg.payload as unknown as CandleData;
-        setCandles((prev) => {
-          if (prev.length > 2000) {
-            return [...prev.slice(-1500), candle];
-          }
-          return [...prev, candle];
-        });
+        setCandles((prev) => mergeCandle(prev, candle));
+      }
+
+      // Replay candle updates — append to chart during backtest
+      if (msg.type === "replay_candle" && msg.payload.symbol === symbol) {
+        const candle = msg.payload as unknown as CandleData;
+        setCandles((prev) => mergeCandle(prev, candle));
+      }
+
+      // Clear chart when a new replay starts
+      if (msg.type === "replay_state") {
+        const state = msg.payload as { running: boolean; bar_index: number };
+        if (state.running && state.bar_index <= 1) {
+          setCandles([]);
+        }
       }
     },
     [symbol]

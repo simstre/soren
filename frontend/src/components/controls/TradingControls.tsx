@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Play, Square, Loader2, ScanLine } from "lucide-react";
+import { Play, Square, Loader2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/stores/appStore";
 import { useEngine } from "@/hooks/useEngine";
@@ -13,7 +13,6 @@ export function TradingControls() {
   const [scanning, setScanning] = useState(false);
   const selectedStrategy = useAppStore((s) => s.selectedStrategy);
   const scanTactic = useAppStore((s) => s.scanTactic);
-  const setScanTactic = useAppStore((s) => s.setScanTactic);
   const setTradeHistoryTab = useAppStore((s) => s.setTradeHistoryTab);
   const setPerformanceTab = useAppStore((s) => s.setPerformanceTab);
   const { status, loading, start, stop } = useEngine();
@@ -49,24 +48,6 @@ export function TradingControls() {
       {selectedDef && !running && (
         <div className="mb-2 text-[10px] text-zinc-500 text-center">
           {selectedDef.timeframe} &middot; {(selectedDef.position_size_pct * 100).toFixed(0)}% position &middot; {(selectedDef.stop_loss_pct * 100).toFixed(1)}% SL
-        </div>
-      )}
-      {!running && (
-        <div className="mb-2 flex gap-1">
-          {([{ value: "watchlist", label: "Watchlist" }, { value: "market_scan", label: "Market Scan" }] as const).map((t) => (
-            <button
-              key={t.value}
-              onClick={() => setScanTactic(t.value)}
-              className={clsx(
-                "flex-1 py-1 text-xs rounded transition-colors",
-                scanTactic === t.value
-                  ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                  : "bg-zinc-900 text-zinc-400 border border-zinc-700 hover:border-zinc-600"
-              )}
-            >
-              {t.label}
-            </button>
-          ))}
         </div>
       )}
       <button

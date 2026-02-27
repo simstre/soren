@@ -10,13 +10,15 @@ export function useEngine() {
   const [status, setStatus] = useState<EngineStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const setEngineRunning = useAppStore((s) => s.setEngineRunning);
+  const setActiveTickers = useAppStore((s) => s.setActiveTickers);
 
   const fetchStatus = useCallback(() => {
     return api.getEngineStatus().then((s) => {
       setStatus(s);
       setEngineRunning(s.running);
+      setActiveTickers(s.running ? s.active_tickers : []);
     });
-  }, [setEngineRunning]);
+  }, [setEngineRunning, setActiveTickers]);
 
   useEffect(() => {
     fetchStatus();
@@ -28,9 +30,10 @@ export function useEngine() {
         const s = msg.payload as unknown as EngineStatus;
         setStatus(s);
         setEngineRunning(s.running);
+        setActiveTickers(s.running ? s.active_tickers : []);
       }
     },
-    [setEngineRunning]
+    [setEngineRunning, setActiveTickers]
   );
 
   useWebSocket(handleWS);

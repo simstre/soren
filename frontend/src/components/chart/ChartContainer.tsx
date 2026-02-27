@@ -5,6 +5,7 @@ import { createChart, createTextWatermark, createSeriesMarkers, ColorType, Candl
 import { useCandles } from "@/hooks/useCandles";
 import { useAnalysis } from "@/hooks/useAnalysis";
 import { useWebSocket } from "@/hooks/useWebSocket";
+import { useTickerCycler } from "@/hooks/useTickerCycler";
 import { useAppStore } from "@/stores/appStore";
 import { api } from "@/lib/api";
 import { ChartToolbar } from "./ChartToolbar";
@@ -51,6 +52,43 @@ export function ChartContainer() {
   const autoScrollRef = useRef(true);
   const rafRef = useRef<number | null>(null);
   const prevCandleCountRef = useRef(0);
+  const allLiveMarkersRef = useRef<Map<string, MarkerWithId[]>>(new Map());
+
+  // Live trade marker handler — called by useTickerCycler on trade_opened
+  const handleLiveTradeOpened = useCallback((trade: Trade) => {
+    const fmt = (n: number) => n.toFixed(2);
+    const entryId = `live-entry-${trade.id}`;
+    const isBuy = trade.side === "BUY";
+    const utcOffset = getLocalUtcOffsetSeconds();
+    const entryTime = (Math.floor(new Date(trade.entry_time).getTime() / 1000) + utcOffset) as unknown as Time;
+
+    const symMarkers = allLiveMarkersRef.current.get(trade.symbol) ?? [];
+    const filtered = symMarkers.filter((m) => m.id !== entryId);
+    filtered.push({
+      time: entryTime,
+      position: isBuy ? "belowBar" : "aboveBar",
+      color: isBuy ? "#10b981" : "#ef4444",
+      shape: isBuy ? "arrowUp" : "arrowDown",
+      text: isBuy ? `BUY $${fmt(trade.entry_price)}` : `SELL $${fmt(trade.entry_price)}`,
+      id: entryId,
+    } as MarkerWithId);
+    allLiveMarkersRef.current.set(trade.symbol, filtered);
+
+    // Render if this is the currently displayed ticker
+    const currentTicker = useAppStore.getState().selectedTicker;
+    if (trade.symbol === currentTicker && seriesRef.current) {
+      tradeMarkersRef.current = filtered;
+      const sorted = [...filtered].sort((a, b) => (a.time as number) - (b.time as number));
+      if (tradeMarkerHandleRef.current) {
+        tradeMarkerHandleRef.current.setMarkers(sorted);
+      } else {
+        tradeMarkerHandleRef.current = createSeriesMarkers(seriesRef.current, sorted);
+      }
+    }
+  }, []);
+
+  // Auto-cycle through active tickers while engine runs; snap on trade_opened
+  useTickerCycler(handleLiveTradeOpened);
 
   // Fetch company name when ticker changes
   useEffect(() => {
@@ -125,6 +163,7 @@ export function ChartContainer() {
       borderDownColor: "#ef4444",
       wickUpColor: "#10b981",
       wickDownColor: "#ef4444",
+      priceLineColor: "#3b82f6",
     });
 
     chartRef.current = chart;
@@ -146,6 +185,7 @@ export function ChartContainer() {
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
+      watermarkRef.current = null;
     };
   }, [onVisibleLogicalRangeChanged]);
 
@@ -241,9 +281,9 @@ export function ChartContainer() {
     }
   }, [selectedTicker, companyName]);
 
-  // Apply technical analysis overlays
+  // Apply technical analysis overlays (only re-run when analysis changes, not on every candle poll)
   useEffect(() => {
-    if (!chartRef.current || !seriesRef.current) return;
+    if (!chartRef.current || !seriesRef.current || !analysis) return;
 
     // Clear previous overlays
     if (overlayHandlesRef.current) {
@@ -251,14 +291,12 @@ export function ChartContainer() {
       overlayHandlesRef.current = null;
     }
 
-    if (analysis && candles.length > 0) {
-      overlayHandlesRef.current = applyOverlays(
-        chartRef.current,
-        seriesRef.current,
-        analysis,
-      );
-    }
-  }, [analysis, candles]);
+    overlayHandlesRef.current = applyOverlays(
+      chartRef.current,
+      seriesRef.current,
+      analysis,
+    );
+  }, [analysis]);
 
   // Replay trade arrows — listen for replay_trade and replay_state via WebSocket
   // Accumulate markers by symbol so all trades are available when switching tickers
@@ -341,13 +379,15 @@ export function ChartContainer() {
 
   useWebSocket(handleReplayTradeWS);
 
-  // When selectedTicker changes, render that ticker's accumulated replay markers
+  // When selectedTicker changes, render that ticker's accumulated replay + live markers
   useEffect(() => {
     if (!seriesRef.current) return;
-    const markers = allReplayMarkersRef.current.get(selectedTicker);
-    if (markers && markers.length > 0) {
-      tradeMarkersRef.current = markers;
-      const sorted = [...markers].sort(
+    const replayMarkers = allReplayMarkersRef.current.get(selectedTicker) ?? [];
+    const liveMarkers = allLiveMarkersRef.current.get(selectedTicker) ?? [];
+    const combined = [...replayMarkers, ...liveMarkers];
+    if (combined.length > 0) {
+      tradeMarkersRef.current = combined;
+      const sorted = combined.sort(
         (a, b) => (a.time as number) - (b.time as number)
       );
       if (tradeMarkerHandleRef.current) {

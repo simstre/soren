@@ -88,7 +88,6 @@ export function ReplayPanel() {
   const setSelectedTicker = useAppStore((s) => s.setSelectedTicker);
   const selectedStrategy = useAppStore((s) => s.selectedStrategy);
   const scanTactic = useAppStore((s) => s.scanTactic);
-  const setScanTactic = useAppStore((s) => s.setScanTactic);
 
   // Fetch strategies to get the selected one's timeframe
   const [strategies, setStrategies] = useState<Strategy[]>([]);
@@ -180,27 +179,6 @@ export function ReplayPanel() {
           {/* Config (hide when running or showing results) */}
           {!isRunning && !results && (
             <>
-              {/* Scan tactic toggle */}
-              <div>
-                <label className="block text-xs text-zinc-500 mb-1">Scan Tactic</label>
-                <div className="flex gap-1">
-                  {([{ value: "watchlist", label: "Watchlist" }, { value: "market_scan", label: "Market Scan" }] as const).map((t) => (
-                    <button
-                      key={t.value}
-                      onClick={() => setScanTactic(t.value)}
-                      className={clsx(
-                        "flex-1 py-1 text-xs rounded transition-colors",
-                        scanTactic === t.value
-                          ? "bg-blue-500/20 text-blue-400 border border-blue-500/30"
-                          : "bg-zinc-900 text-zinc-400 border border-zinc-700 hover:border-zinc-600"
-                      )}
-                    >
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
               {/* Period presets */}
               <div>
                 <label className="block text-xs text-zinc-500 mb-1">
