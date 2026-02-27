@@ -57,28 +57,34 @@ def _empty_score(symbol: str, disqualify_reason: str, price: float = 0,
 # ---------------------------------------------------------------------------
 # Scoring functions
 #
-# Win rate (50 pts): Probability of each setup being a winner.
-#   For each valid setup, simulate entry with 2x ATR stop / 3x ATR target.
-#   Score based on win rate: 35% → 0, 60%+ → 50 pts.
-# Total P&L (30 pts): Cumulative P&L from all simulated mini-trades.
-#   Measures actual profit potential (quality × opportunity).
-# ATR range (10 pts): Higher ATR = bigger moves = more profit per trade.
-# Volume floor (10 pts): Minimum liquidity for reliable candles.
+# Default weights (v1-v7): WR 50 + P&L 30 + Vol 10 + ATR 10 = 100
+# V8 weights:              WR 40 + P&L 30 + Trend 15 + ATR 10 + Vol 5 = 100
+#
+# Win rate is the strongest predictor of actual backtest P&L.
+# ATR% is a weak predictor (already filtered ≥2.5% in phase 1).
 # ---------------------------------------------------------------------------
 
-def _score_signal_win_rate(win_rate: float, num_setups: int, min_setups: int = 3) -> float:
+def _score_signal_win_rate(win_rate: float, num_setups: int, min_setups: int = 3,
+                           gated: bool = False) -> float:
     """0-50 pts. Based on simulated mini-trade win rate.
 
-    Requires at least min_setups to be meaningful. Win rates below 35% score 0
-    (breakeven with 2:3 R:R is ~40%). 60%+ scores max. Linear between.
+    When gated=True (v8), WR < 50% is already filtered out, so remap:
+    50% → 0, 75%+ → 50. Otherwise original scale: 35% → 0, 60%+ → 50.
     """
     if num_setups < min_setups:
         return 0.0
-    if win_rate <= 0.35:
-        return 0.0
-    if win_rate >= 0.60:
-        return 50.0
-    return (win_rate - 0.35) / 0.25 * 50
+    if gated:
+        if win_rate <= 0.50:
+            return 0.0
+        if win_rate >= 0.75:
+            return 50.0
+        return (win_rate - 0.50) / 0.25 * 50
+    else:
+        if win_rate <= 0.35:
+            return 0.0
+        if win_rate >= 0.60:
+            return 50.0
+        return (win_rate - 0.35) / 0.25 * 50
 
 
 def _score_total_pnl(total_pnl_pct: float, num_setups: int, min_setups: int = 3) -> float:
@@ -96,13 +102,13 @@ def _score_total_pnl(total_pnl_pct: float, num_setups: int, min_setups: int = 3)
     return total_pnl_pct / 2.0 * 30
 
 
-def _score_volume(avg_volume: float) -> float:
-    """0-10 pts. Once above 10M, volume barely matters."""
+def _score_volume(avg_volume: float, max_pts: float = 10) -> float:
+    """0-max_pts. Once above 10M, volume barely matters."""
     if avg_volume < 1_000_000:
         return 0.0
     if avg_volume >= 50_000_000:
-        return 10.0
-    return (avg_volume - 1_000_000) / (50_000_000 - 1_000_000) * 10
+        return max_pts
+    return (avg_volume - 1_000_000) / (50_000_000 - 1_000_000) * max_pts
 
 
 def _score_daily_trend(daily_returns: pd.Series) -> float:
@@ -218,12 +224,11 @@ async def _phase1_daily_filter(
 def _simulate_signals_on_1m(df: pd.DataFrame, scan_config: ScanConfig | None = None) -> tuple[int, int, float, int]:
     """Simulate mini-trades for each valid strategy setup on 1m data.
 
-    For each setup (divergence + matching S/R + RSI in band):
-    - Entry at current close
-    - Stop = atr_stop_mult × ATR(14) against the trade
-    - Target = atr_target_mult × ATR(14) in trade direction
-    - Walk forward bar-by-bar, see which is hit first
-    - If neither hit within max_hold_bars, close at current price
+    Matches the real replay engine as closely as possible:
+    - Pass full RSI/price history to divergence detector (not just 20 bars)
+    - Time-of-day filter: skip 9:00-9:45 AM and after 3:00 PM
+    - Volume confirmation: skip bars with volume < 50% of 20-bar avg
+    - Cooldown applied after trades (matching scan_config.cooldown_bars)
 
     Returns (num_setups, wins, total_pnl_pct, sr_strong_count).
     """
@@ -236,10 +241,15 @@ def _simulate_signals_on_1m(df: pd.DataFrame, scan_config: ScanConfig | None = N
     closes = df["close"].values.tolist()
     highs = df["high"].values.tolist()
     lows = df["low"].values.tolist()
+    volumes = df["volume"].values.tolist() if "volume" in df.columns else []
     rsi_series = calc_rsi(df["close"], period=14)
     rsi_values = rsi_series.values.tolist()
     atr_series = calc_atr(df, period=14)
     atr_values = atr_series.values.tolist()
+
+    # Extract timestamps for time-of-day filter
+    has_timestamps = hasattr(df.index, 'hour')
+    timestamps = df.index if has_timestamps else None
 
     # Detect S/R levels
     sr_levels = detect_sr_levels(df)
@@ -252,23 +262,39 @@ def _simulate_signals_on_1m(df: pd.DataFrame, scan_config: ScanConfig | None = N
     num_setups = 0
     wins = 0
     total_pnl_pct = 0.0
-    window_size = 20
-    step = 5
+    min_bars = 20
     cooldown = 0  # skip N bars after a trade
 
-    for i in range(window_size, len(closes) - 1, step):
+    for i in range(min_bars, len(closes) - 1):
         if cooldown > 0:
-            cooldown -= step
+            cooldown -= 1
             continue
 
-        # Check RSI divergence
-        window_rsi = [v for v in rsi_values[i - window_size:i] if not np.isnan(v)]
-        window_prices = closes[i - window_size:i]
+        # Time-of-day filter (match real engine: skip 9:00-9:45 and after 3 PM)
+        if timestamps is not None:
+            ts = timestamps[i]
+            hour = ts.hour
+            minute = getattr(ts, 'minute', 0)
+            if hour == 9 and minute < 45:
+                continue
+            if hour >= 15:
+                continue
 
-        if len(window_rsi) < window_size or len(window_prices) < window_size:
+        # Volume confirmation (match real engine: >= 50% of 20-bar avg)
+        if volumes and i >= 20:
+            cur_vol = volumes[i]
+            avg_vol = sum(volumes[i-20:i]) / 20
+            if avg_vol > 0 and cur_vol < avg_vol * 0.5:
+                continue
+
+        # RSI divergence — pass full history up to current bar (match real engine)
+        full_rsi = [v for v in rsi_values[:i] if not np.isnan(v)]
+        full_prices = closes[:i]
+
+        if len(full_rsi) < 20:
             continue
 
-        div = detect_rsi_divergence(window_rsi, window_prices, lookback=window_size)
+        div = detect_rsi_divergence(full_rsi, full_prices, lookback=20)
         if div is None or div.rsi_spread < scan_config.min_rsi_spread:
             continue
 
@@ -277,7 +303,7 @@ def _simulate_signals_on_1m(df: pd.DataFrame, scan_config: ScanConfig | None = N
         if scan_config.flip_signals:
             direction = "bearish" if direction == "bullish" else "bullish"
 
-        current_rsi = window_rsi[-1]
+        current_rsi = full_rsi[-1]
         entry_price = closes[i]
 
         # ATR at this bar
@@ -421,25 +447,23 @@ async def _score_ticker(
 
         # Score components
         is_pct = scan_config and scan_config.use_pct_stops
-        wr_s = _score_signal_win_rate(win_rate, num_setups, min_setups=min_setups_for_scoring)
-        pnl_s = _score_total_pnl(total_pnl_pct, num_setups, min_setups=min_setups_for_scoring)
-        vol_s = _score_volume(avg_volume)
-        atr_s = _score_atr_range(atr_pct, no_upper_penalty=bool(is_pct))
 
-        # For pct-based strategies (v8+), the mini-backtest signal detection
-        # doesn't match the actual strategy well enough to predict P&L.
-        # Instead, weight toward observable characteristics that correlate
-        # with actual v8 success: high daily range + trend persistence.
-        # Reweight: ATR 40 + Trend 30 + PnL 15 + Vol 15 = 100
         if is_pct:
+            # V8 weights: WR 40 + P&L 30 + Trend 15 + ATR 10 + Vol 5 = 100
+            wr_s = _score_signal_win_rate(win_rate, num_setups, min_setups=min_setups_for_scoring, gated=True)
+            pnl_s = _score_total_pnl(total_pnl_pct, num_setups, min_setups=min_setups_for_scoring)
+            vol_s = _score_volume(avg_volume, max_pts=5)
+            atr_s = _score_atr_range(atr_pct, no_upper_penalty=True)
             trend_s = _score_daily_trend(daily_returns) if daily_returns is not None else 0
-            wr_s = 0                    # ignore WR (unreliable for v8)
-            pnl_s = pnl_s * (15/30)     # 30 → 15
-            vol_s = vol_s * 1.5          # 10 → 15
-            atr_s = atr_s * 4.0          # 10 → 40
-            trend_s = trend_s * 3.0      # 10 → 30
+            wr_s = wr_s * (40/50)       # 50 → 40
+            trend_s = trend_s * 1.5      # 10 → 15
+            # atr_s stays at 10, pnl_s stays at 30, vol_s is already 5
             total = wr_s + pnl_s + vol_s + atr_s + trend_s
         else:
+            wr_s = _score_signal_win_rate(win_rate, num_setups, min_setups=min_setups_for_scoring)
+            pnl_s = _score_total_pnl(total_pnl_pct, num_setups, min_setups=min_setups_for_scoring)
+            vol_s = _score_volume(avg_volume)
+            atr_s = _score_atr_range(atr_pct)
             total = wr_s + pnl_s + vol_s + atr_s
 
         logger.info(
@@ -474,6 +498,73 @@ async def _score_ticker(
 
 
 # ---------------------------------------------------------------------------
+# Approach 1: Daily-metrics-only scoring (skip mini-backtest)
+# ---------------------------------------------------------------------------
+
+def _score_daily_metrics_only(
+    price: float, avg_volume: float, atr_pct: float, daily_returns: pd.Series | None,
+) -> float:
+    """Score ticker for v8 using ONLY daily metrics — no mini-backtest.
+
+    Targets tickers with: high ATR (4-7%), trending behavior, steady volume,
+    positive return asymmetry (up days > down days in magnitude).
+    Total: ATR 25 + Volatility 20 + Trend 20 + Volume 15 + Asymmetry 10 + Price 10 = 100
+    """
+    if daily_returns is None or len(daily_returns.dropna()) < 10:
+        return 0.0
+
+    # ATR Range (0-25): peak at 4-7%, no penalty above for v8
+    if atr_pct < 3.0:
+        atr_s = (atr_pct / 3.0) * 12
+    elif atr_pct <= 4.0:
+        atr_s = 12 + (atr_pct - 3.0) * 4
+    elif atr_pct <= 7.0:
+        atr_s = 16 + (atr_pct - 4.0) / 3.0 * 9
+    else:
+        atr_s = 25.0
+    atr_s = max(0, min(25, atr_s))
+
+    # Daily volatility (0-20): std dev of returns, 1-3% is good
+    daily_vol = daily_returns.std() * 100
+    if daily_vol < 0.5:
+        vol_s = (daily_vol / 0.5) * 10
+    elif daily_vol <= 3.0:
+        vol_s = 10 + (daily_vol - 0.5) / 2.5 * 10
+    else:
+        vol_s = 20.0
+    vol_s = max(0, min(20, vol_s))
+
+    # Trend persistence (0-20): reuse existing function, scale 10→20
+    trend_s = _score_daily_trend(daily_returns) * 2.0
+    trend_s = max(0, min(20, trend_s))
+
+    # Volume (0-15): steady liquidity
+    if avg_volume < 5_000_000:
+        liq_s = (avg_volume / 5_000_000) * 5
+    elif avg_volume <= 50_000_000:
+        liq_s = 5 + (avg_volume - 5_000_000) / 45_000_000 * 10
+    else:
+        liq_s = 15.0
+    liq_s = max(0, min(15, liq_s))
+
+    # Return asymmetry (0-10): larger up moves than down moves
+    returns_clean = daily_returns.dropna()
+    up_ret = returns_clean[returns_clean > 0]
+    down_ret = returns_clean[returns_clean < 0]
+    if len(up_ret) > 0 and len(down_ret) > 0:
+        ratio = up_ret.mean() / (abs(down_ret.mean()) + 1e-6)
+        asym_s = min(10, 5 + (ratio - 1.0) * 5)
+    else:
+        asym_s = 5.0
+    asym_s = max(0, min(10, asym_s))
+
+    # Price (0-10): bonus for >= $50
+    price_s = min(10, (price / 50) * 10) if price < 50 else 10.0
+
+    return atr_s + vol_s + trend_s + liq_s + asym_s + price_s
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -490,23 +581,67 @@ async def run_fitness_scan(
     universe: list[str] | None = None,
     top_n: int = 15,
     scan_config: ScanConfig | None = None,
+    scoring_mode: str = "mini_backtest",
 ) -> list[FitnessScore]:
-    """Two-phase fitness scan: daily filter → 1m mini-backtest."""
+    """Fitness scan with selectable scoring mode.
+
+    scoring_mode:
+      "mini_backtest" — phase 2 mini-backtest (fixed: time-of-day, volume, full divergence window)
+      "daily_only"    — phase 1 daily metrics only (no 1m data fetch)
+      "real_backtest"  — use actual replay engine for scoring (slow but accurate)
+    """
     if universe is None:
         from app.scanner.runner import SCAN_UNIVERSE
         symbols = SCAN_UNIVERSE
     else:
         symbols = universe
 
-    logger.info("fitness_scan_start", symbols=len(symbols), top_n=top_n)
+    # Auto-select real_backtest for v8 (pct-based) strategies unless overridden
+    is_pct = scan_config and scan_config.use_pct_stops
+    if scoring_mode == "mini_backtest" and is_pct:
+        scoring_mode = "real_backtest"
+
+    logger.info("fitness_scan_start", symbols=len(symbols), top_n=top_n, mode=scoring_mode)
 
     candidates = await _phase1_daily_filter(symbols, top_n=40, scan_config=scan_config)
     logger.info("phase1_candidates", count=len(candidates))
 
     scores: list[FitnessScore] = []
-    for sym, price, avg_volume, atr_pct, daily_returns in candidates:
-        score = await _score_ticker(sym, price, avg_volume, atr_pct, scan_config, daily_returns)
-        scores.append(score)
+
+    if scoring_mode == "daily_only":
+        for sym, price, avg_volume, atr_pct, daily_returns in candidates:
+            total = _score_daily_metrics_only(price, avg_volume, atr_pct, daily_returns)
+            scores.append(FitnessScore(
+                symbol=sym, total_score=round(total, 1), price=round(price, 2),
+                avg_volume=avg_volume, atr_pct=round(atr_pct, 2), sr_strong_count=0,
+                volume_score=0, price_score=0, sr_score=0, atr_score=0,
+                disqualified=False, disqualify_reason="",
+            ))
+            logger.info("daily_score", symbol=sym, score=round(total, 1))
+
+    elif scoring_mode == "real_backtest":
+        from app.scanner.backtest_scorer import score_via_backtest
+        bt_results = await score_via_backtest(
+            [c[0] for c in candidates], days=7, strategy="rsi_divergence_pct",
+        )
+        cand_map = {c[0]: c for c in candidates}
+        for sym, pnl_pct, wr, trades in bt_results:
+            _, price, avg_volume, atr_pct, _ = cand_map[sym]
+            # Score: 60% P&L + 40% WR (both proven predictors from real engine)
+            pnl_s = min(60, max(0, pnl_pct / 5.0 * 60))  # 5%+ → 60 pts
+            wr_s = max(0, (wr - 40) / 30 * 40)  # 40%→0, 70%+→40 pts
+            total = pnl_s + wr_s
+            scores.append(FitnessScore(
+                symbol=sym, total_score=round(total, 1), price=round(price, 2),
+                avg_volume=avg_volume, atr_pct=round(atr_pct, 2), sr_strong_count=trades,
+                volume_score=0, price_score=round(wr_s, 1), sr_score=round(pnl_s, 1),
+                atr_score=0, disqualified=False, disqualify_reason="",
+            ))
+
+    else:  # "mini_backtest" (default)
+        for sym, price, avg_volume, atr_pct, daily_returns in candidates:
+            score = await _score_ticker(sym, price, avg_volume, atr_pct, scan_config, daily_returns)
+            scores.append(score)
 
     qualified = [s for s in scores if not s.disqualified]
     qualified.sort(key=lambda s: s.total_score, reverse=True)

@@ -1,0 +1,28 @@
+Scanner Comparison — 2026-02-26 22:18
+Strategy: rsi_divergence_pct
+Backtest: 29 days
+
+DEFAULT tickers: MRVL, SNOW, LRCX, ARM
+BROAD tickers:   COHR, MRNA, SNOW, AXTI
+New discoveries: COHR, MRNA, AXTI
+
+
+DEFAULT (67-ticker)
+  PnL: $+425.88 (+0.43%)
+  WR: 43.9% | Trades: 66
+  Max DD: 1.74%
+  MRVL: PnL +0.15% | 18 trades | WR 50%
+  SNOW: PnL -0.05% | 16 trades | WR 44%
+  LRCX: PnL +0.41% | 19 trades | WR 42%
+  ARM: PnL -0.08% | 13 trades | WR 38%
+
+BROAD (~7000-ticker)
+  PnL: $+51.71 (+0.05%)
+  WR: 43.8% | Trades: 64
+  Max DD: 2.15%
+  COHR: PnL -0.51% | 17 trades | WR 47%
+  MRNA: PnL +0.01% | 17 trades | WR 41%
+  SNOW: PnL +0.59% | 17 trades | WR 53%
+  AXTI: PnL -0.05% | 13 trades | WR 31%
+
+Winner: DEFAULT (-0.38% PnL delta)

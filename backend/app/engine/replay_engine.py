@@ -633,18 +633,21 @@ class ReplayEngine:
                     self.broker.set_current_price(sym, close_price)
                     self.broker.update_position_prices(sym, close_price)
 
-                    # In instant mode, skip candle broadcasts
-                    if not headless and not instant:
-                        candle_data = {
-                            "symbol": sym,
-                            "timestamp": timestamp.isoformat(),
-                            "open": round(float(row["open"]), 2),
-                            "high": round(float(row["high"]), 2),
-                            "low": round(float(row["low"]), 2),
-                            "close": round(close_price, 2),
-                            "volume": int(row["volume"]),
-                        }
-                        await ws_manager.broadcast("replay_candle", candle_data)
+                    if not headless:
+                        # In instant mode: only broadcast candles every 20 bars for primary symbol
+                        # In normal mode: broadcast every candle for every symbol
+                        should_send = (not instant) or (instant and bar_idx % 20 == 0 and sym == self._symbol)
+                        if should_send:
+                            candle_data = {
+                                "symbol": sym,
+                                "timestamp": timestamp.isoformat(),
+                                "open": round(float(row["open"]), 2),
+                                "high": round(float(row["high"]), 2),
+                                "low": round(float(row["low"]), 2),
+                                "close": round(close_price, 2),
+                                "volume": int(row["volume"]),
+                            }
+                            await ws_manager.broadcast("replay_candle", candle_data)
 
                     # Check stops/targets
                     closed_trades = self.broker.check_stops_and_targets(
@@ -682,8 +685,23 @@ class ReplayEngine:
 
                 if not headless:
                     if instant:
-                        # In instant mode: broadcast progress every ~500 bars
-                        if bar_idx % 500 == 0:
+                        # In instant mode: broadcast progress + positions every ~50 bars
+                        if bar_idx % 50 == 0:
+                            positions = await self.broker.get_positions()
+                            await ws_manager.broadcast("replay_positions", {
+                                "positions": [
+                                    {
+                                        "symbol": p.symbol,
+                                        "quantity": abs(p.quantity),
+                                        "avg_cost": p.avg_cost,
+                                        "current_price": p.current_price,
+                                        "unrealized_pnl": p.unrealized_pnl,
+                                        "unrealized_pnl_pct": p.unrealized_pnl_pct,
+                                        "market_value": p.market_value,
+                                    }
+                                    for p in positions
+                                ]
+                            })
                             await self._broadcast_state()
                             await asyncio.sleep(0)  # yield to event loop
                     else:
@@ -708,27 +726,28 @@ class ReplayEngine:
                         delay = BASE_DELAY / self._speed
                         await asyncio.sleep(delay)
 
-            # Replay complete
+            # Replay complete — force-close any remaining open positions
+            positions = await self.broker.get_positions()
+            last_ts = unified_timeline[-1] if unified_timeline else None
+            ts_str = last_ts.isoformat() if last_ts and hasattr(last_ts, "isoformat") else ""
+            for pos in positions:
+                price = self.broker._current_prices.get(pos.symbol, pos.current_price)
+                closed = self.broker.close_position(pos.symbol, price, exit_reason="backtest_end")
+                if closed:
+                    self._close_trade_record(closed, ts_str, "backtest_end")
+                    logger.info("force_closed_at_backtest_end", symbol=pos.symbol, pnl=closed["pnl"])
+
+            # Record final equity after closing all positions
+            final_balance = await self.broker.get_account_balance()
+            if equity_curve:
+                equity_curve[-1]["balance"] = round(final_balance, 2)
+
             self._running = False
             self._results = self._build_results(equity_curve)
 
             if not headless:
-                # Broadcast final positions so UI can display them
-                positions = await self.broker.get_positions()
-                await ws_manager.broadcast("replay_positions", {
-                    "positions": [
-                        {
-                            "symbol": p.symbol,
-                            "quantity": abs(p.quantity),
-                            "avg_cost": p.avg_cost,
-                            "current_price": p.current_price,
-                            "unrealized_pnl": p.unrealized_pnl,
-                            "unrealized_pnl_pct": p.unrealized_pnl_pct,
-                            "market_value": p.market_value,
-                        }
-                        for p in positions
-                    ]
-                })
+                # Broadcast empty positions (all closed)
+                await ws_manager.broadcast("replay_positions", {"positions": []})
                 await ws_manager.broadcast("replay_complete", {
                     "results": self._results.to_dict(),
                 })

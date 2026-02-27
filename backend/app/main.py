@@ -7,6 +7,7 @@ import structlog
 from app.config import settings
 from app.db.session import engine
 from app.db.base import Base
+import app.models  # noqa: F401 — register all ORM models for create_all
 from app.api.rest import trades, positions, metrics, tickers, engine as engine_api, scanner, candles, analysis, replay
 from app.api.ws.handlers import router as ws_router
 

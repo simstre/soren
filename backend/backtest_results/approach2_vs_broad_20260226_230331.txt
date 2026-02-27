@@ -1,0 +1,17 @@
+Approach 2 vs Broad Scan — 2026-02-26 23:03
+Strategy: rsi_divergence_pct | Backtest: 29 days
+
+approach2_67: MRVL,SNOW,LRCX,ARM
+  P&L: +9.85% ($+14,768)
+  WR: 57.6% | Trades: 33 | DD: 5.44%
+
+baseline: TSLA,CEG,PLTR,RIVN
+  P&L: +15.59% ($+23,381)
+  WR: 61.1% | Trades: 36 | DD: 4.39%
+
+broad_7000: RBRK,COHR,MRNA,SNOW
+  P&L: +9.30% ($+13,952)
+  WR: 55.6% | Trades: 36 | DD: 8.34%
+
+New discoveries from broad: ['RBRK', 'COHR', 'MRNA']
+Winner: baseline (+15.59%)
