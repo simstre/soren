@@ -25,7 +25,7 @@ async def _run_single_backtest(
     from app.broker.replay_adapter import ReplayBrokerAdapter
     from app.engine.replay_engine import ReplayEngine
 
-    end = datetime.now()
+    end = datetime.now() + timedelta(days=1)
     while end.weekday() >= 5:
         end -= timedelta(days=1)
     start = end - timedelta(days=days)

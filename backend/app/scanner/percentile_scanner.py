@@ -36,8 +36,8 @@ async def _collect_data() -> tuple[dict[str, pd.DataFrame], pd.DataFrame]:
     """Fetch universe, batch download 90d daily data, hard filter."""
     universe = await fetch_us_equity_universe()
 
-    end = datetime.now()
-    start = end - timedelta(days=90)
+    end = datetime.now() + timedelta(days=1)
+    start = end - timedelta(days=91)
     start_str, end_str = start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
 
     # Fetch SPY for metric computation

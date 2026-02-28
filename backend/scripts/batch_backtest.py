@@ -54,7 +54,7 @@ PERIODS: list[dict] = [
         "label": "1m_recent_30d",
         "timeframe": "1m",
         "start": (datetime.now() - timedelta(days=29)).strftime("%Y-%m-%d"),
-        "end": datetime.now().strftime("%Y-%m-%d"),
+        "end": (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d"),
         "regime": "recent",
     },
 ]

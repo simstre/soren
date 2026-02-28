@@ -404,7 +404,7 @@ async def _score_ticker(
         df = pd.DataFrame()
         if use_extended:
             from datetime import datetime, timedelta
-            end = datetime.now()
+            end = datetime.now() + timedelta(days=1)
             chunks = []
             for chunk_i in range(4):  # 4 chunks × 7 days = 28 days
                 chunk_end = end - timedelta(days=chunk_i * 7)

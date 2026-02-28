@@ -63,7 +63,7 @@ MAX_EXPOSURE_PCT = 1.00  # 100% total exposure cap
 LOOKBACK_BARS = 200
 
 # Date range: 29 calendar days
-END_DATE = datetime.now().strftime("%Y-%m-%d")
+END_DATE = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
 START_DATE = (datetime.now() - timedelta(days=29)).strftime("%Y-%m-%d")
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "backtest_results"

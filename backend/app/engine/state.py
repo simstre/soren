@@ -12,6 +12,8 @@ class EngineState:
     timeframe: str = "5m"
     strategy: str = "refined_rsi"
     error: str | None = None
+    last_rescan_at: datetime | None = None
+    rescan_error: str | None = None
 
     def start(self, tickers: list[str], timeframe: str = "5m", strategy: str = "refined_rsi"):
         self.running = True
@@ -25,6 +27,8 @@ class EngineState:
         self.running = False
         self.started_at = None
         self.active_tickers = []
+        self.last_rescan_at = None
+        self.rescan_error = None
 
     def to_dict(self) -> dict:
         now = datetime.now(timezone.utc)
@@ -38,4 +42,6 @@ class EngineState:
             "uptime_seconds": uptime,
             "timeframe": self.timeframe,
             "strategy": self.strategy,
+            "last_rescan_at": self.last_rescan_at.isoformat() if self.last_rescan_at else None,
+            "rescan_error": self.rescan_error,
         }

@@ -21,6 +21,8 @@ class EngineStatusResponse(BaseModel):
     uptime_seconds: float
     timeframe: str
     strategy: str = "refined_rsi"
+    last_rescan_at: str | None = None
+    rescan_error: str | None = None
 
 
 @router.get("/status", response_model=EngineStatusResponse)
@@ -59,3 +61,14 @@ async def stop_engine():
         raise HTTPException(status_code=500, detail="Trading engine not initialized")
     await engine.stop()
     return {"status": "stopped"}
+
+
+@router.post("/rescan")
+async def trigger_rescan():
+    engine = get_engine()
+    if not engine:
+        raise HTTPException(status_code=500, detail="Trading engine not initialized")
+    if not engine.state.running:
+        raise HTTPException(status_code=400, detail="Engine is not running")
+    await engine._run_rescan()
+    return {"status": "rescan_complete", "active_tickers": engine.state.active_tickers}

@@ -18,6 +18,7 @@ class WSMessage(BaseModel):
         "replay_trade",
         "replay_complete",
         "replay_positions",
+        "ticker_rescan",
     ]
     payload: dict[str, Any]
     timestamp: datetime

@@ -1,7 +1,8 @@
 """Main trading engine - orchestrates the full pipeline."""
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import yfinance as yf
@@ -31,6 +32,7 @@ from app.engine.state import EngineState
 from app.api.ws.manager import ws_manager
 from app.config import settings
 from app.db.trade_repo import save_trade, update_trade, load_all_trades
+from app.scanner.fitness import run_fitness_scan
 
 logger = structlog.get_logger()
 
@@ -48,6 +50,7 @@ class TradingEngine:
         self.broker = broker
         self.state = EngineState()
         self._task: asyncio.Task | None = None
+        self._rescan_task: asyncio.Task | None = None
         self._trade_records: list[dict] = []
         self._divergence_tracker: DivergenceTracker | None = None
         self._strategy_def: StrategyDef | None = None
@@ -74,6 +77,7 @@ class TradingEngine:
         self._divergence_tracker = DivergenceTracker(candidates)
 
         self._task = asyncio.create_task(self._run_loop())
+        self._rescan_task = asyncio.create_task(self._rescan_loop())
         await ws_manager.broadcast("engine_state", self.state.to_dict())
         logger.info("engine_started", tickers=tickers, timeframe=tf, strategy=strategy)
 
@@ -83,6 +87,13 @@ class TradingEngine:
 
         # Stop the loop first so no new positions are opened
         self.state.stop()
+        if self._rescan_task:
+            self._rescan_task.cancel()
+            try:
+                await self._rescan_task
+            except asyncio.CancelledError:
+                pass
+            self._rescan_task = None
         if self._task:
             self._task.cancel()
             try:
@@ -106,6 +117,73 @@ class TradingEngine:
         await ws_manager.broadcast("engine_state", self.state.to_dict())
         logger.info("engine_stopped")
 
+    def _seconds_until_next_rescan(self) -> float:
+        """Calculate seconds until the next 9:25 AM ET, skipping weekends."""
+        et = ZoneInfo("America/New_York")
+        now = datetime.now(et)
+        target = now.replace(hour=9, minute=25, second=0, microsecond=0)
+        if target <= now:
+            target += timedelta(days=1)
+        # Skip weekends: Saturday=5, Sunday=6
+        while target.weekday() >= 5:
+            target += timedelta(days=1)
+        return (target - now).total_seconds()
+
+    async def _rescan_loop(self):
+        """Sleep until 9:25 AM ET each trading day, then rescan tickers."""
+        try:
+            while self.state.running:
+                sleep_secs = self._seconds_until_next_rescan()
+                logger.info("rescan_scheduled", sleep_seconds=round(sleep_secs), next_rescan_in_hours=round(sleep_secs / 3600, 1))
+                await asyncio.sleep(sleep_secs)
+                if not self.state.running:
+                    break
+                await self._run_rescan()
+        except asyncio.CancelledError:
+            logger.info("rescan_loop_cancelled")
+            raise
+
+    async def _run_rescan(self):
+        """Run fitness scan and swap active tickers, preserving open positions."""
+        logger.info("rescan_starting", current_tickers=self.state.active_tickers)
+        old_tickers = list(self.state.active_tickers)
+        try:
+            scan_config = self._strategy_def.scan_config if self._strategy_def else None
+            top_n = max(len(old_tickers), 4)
+            results = await run_fitness_scan(top_n=top_n, scan_config=scan_config)
+            new_tickers = [r.symbol for r in results]
+
+            # Preserve tickers with open positions
+            open_symbols = {r["symbol"] for r in self._trade_records if r["status"] == "OPEN"}
+            for sym in open_symbols:
+                if sym not in new_tickers:
+                    new_tickers.append(sym)
+
+            self.state.active_tickers = new_tickers
+            self.state.last_rescan_at = datetime.now(timezone.utc)
+            self.state.rescan_error = None  # Clear any previous error
+
+            added = [t for t in new_tickers if t not in old_tickers]
+            removed = [t for t in old_tickers if t not in new_tickers]
+            logger.info("rescan_complete", new_tickers=new_tickers, added=added, removed=removed)
+
+            await ws_manager.broadcast("ticker_rescan", {
+                "old_tickers": old_tickers,
+                "new_tickers": new_tickers,
+                "added": added,
+                "removed": removed,
+            })
+            await ws_manager.broadcast("engine_state", self.state.to_dict())
+        except Exception as e:
+            error_msg = f"Scanner failed: {e}"
+            logger.error("rescan_failed", error=str(e))
+            self.state.rescan_error = error_msg
+            await ws_manager.broadcast("ticker_rescan", {
+                "error": error_msg,
+                "old_tickers": old_tickers,
+            })
+            await ws_manager.broadcast("engine_state", self.state.to_dict())
+
     async def _run_loop(self):
         """Main trading loop - collect signals from all tickers, rank, execute best."""
         timeframe = self.state.timeframe
@@ -126,17 +204,21 @@ class TradingEngine:
                     await self._enforce_max_hold()
 
                 # Phase 1: Collect signals from all tickers
-                all_signals: list[TradingSignal] = []
-                for symbol in self.state.active_tickers:
-                    try:
-                        signals = await self._collect_signals(symbol, tf_config)
-                        all_signals.extend(signals)
-                    except Exception as e:
-                        logger.error("symbol_processing_error", symbol=symbol, error=str(e))
+                # Skip new entries if rescan failed — only manage existing positions
+                if self.state.rescan_error:
+                    logger.warning("entries_paused", reason="rescan_error", error=self.state.rescan_error)
+                else:
+                    all_signals: list[TradingSignal] = []
+                    for symbol in self.state.active_tickers:
+                        try:
+                            signals = await self._collect_signals(symbol, tf_config)
+                            all_signals.extend(signals)
+                        except Exception as e:
+                            logger.error("symbol_processing_error", symbol=symbol, error=str(e))
 
-                # Phase 2+3: Rank and execute
-                if all_signals:
-                    await self._rank_and_execute(all_signals)
+                    # Phase 2+3: Rank and execute
+                    if all_signals:
+                        await self._rank_and_execute(all_signals)
 
                 await asyncio.sleep(interval_seconds)
         except asyncio.CancelledError:

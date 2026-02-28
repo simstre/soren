@@ -132,7 +132,7 @@ async def batch_download_daily(
 
     Returns {symbol: DataFrame} for tickers passing the hard filter.
     """
-    end = datetime.now()
+    end = datetime.now() + timedelta(days=1)
     start = end - timedelta(days=days)
     start_str, end_str = start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
 

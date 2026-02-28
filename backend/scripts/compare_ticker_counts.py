@@ -28,7 +28,7 @@ STOP_LOSS_PCT = 0.02
 STARTING_BALANCE = 100_000.0
 
 # Test period: last 29 days (yfinance 1m limit is 30 days)
-END_DATE = datetime.now().strftime("%Y-%m-%d")
+END_DATE = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
 START_DATE = (datetime.now() - timedelta(days=29)).strftime("%Y-%m-%d")
 
 

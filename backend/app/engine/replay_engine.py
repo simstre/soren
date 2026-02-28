@@ -423,7 +423,7 @@ class ReplayEngine:
             cache_min_date = cache_min.normalize()
             cache_max_date = cache_max.normalize()
             s_date = s_ts.normalize()
-            e_date = (e_ts - pd.Timedelta(days=1)).normalize()
+            e_date = e_ts.normalize()
 
             if cache_min_date <= s_date and cache_max_date >= e_date:
                 logger.info(
