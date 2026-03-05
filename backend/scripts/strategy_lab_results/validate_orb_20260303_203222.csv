@@ -1,0 +1,3 @@
+split,total_pnl_pct,total_trades,win_rate,max_drawdown_pct
+train,-9.0,119,30.3,14.64
+validate,1.07,33,33.3,2.5

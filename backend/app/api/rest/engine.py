@@ -12,6 +12,7 @@ class EngineStartRequest(BaseModel):
     strategy: str = "rsi_divergence_pct"
     tickers: list[str] | None = None
     timeframe: str | None = None  # defaults to strategy's baked-in timeframe
+    scan_tactic: str = "market_scan"  # 'market_scan' or 'watchlist'
 
 
 class EngineStatusResponse(BaseModel):
@@ -21,6 +22,7 @@ class EngineStatusResponse(BaseModel):
     uptime_seconds: float
     timeframe: str
     strategy: str = "refined_rsi"
+    scan_tactic: str = "market_scan"
     last_rescan_at: str | None = None
     rescan_error: str | None = None
 
@@ -49,9 +51,10 @@ async def start_engine(req: EngineStartRequest | None = None):
     sdef = get_strategy(strategy)
     timeframe = (req.timeframe if req and req.timeframe else None) or (sdef.timeframe if sdef else "1m")
     tickers = (req.tickers if req and req.tickers else None) or _tracked_tickers or ["AAPL"]
+    scan_tactic = req.scan_tactic if req else "market_scan"
 
-    await engine.start(tickers, timeframe=timeframe, strategy=strategy)
-    return {"status": "started", "tickers": tickers, "timeframe": timeframe, "strategy": strategy}
+    await engine.start(tickers, timeframe=timeframe, strategy=strategy, scan_tactic=scan_tactic)
+    return {"status": "started", "tickers": tickers, "timeframe": timeframe, "strategy": strategy, "scan_tactic": scan_tactic}
 
 
 @router.post("/stop")

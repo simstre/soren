@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     default_timeframe: str = "5m"
 
     # CORS
-    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3001"]
+    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3001", "http://localhost:3010"]
 
     model_config = {"env_file": ".env", "env_prefix": "SOREN_"}
 

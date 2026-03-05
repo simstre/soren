@@ -1,0 +1,2 @@
+strategy,total_pnl,total_pnl_pct,total_trades,win_rate,max_drawdown,max_drawdown_pct,avg_hold_bars,trading_days,starting_balance,ending_balance,RIVN_pnl,RIVN_pnl_pct,RIVN_trades,RIVN_win_rate,PLTR_pnl,PLTR_pnl_pct,PLTR_trades,PLTR_win_rate,COIN_pnl,COIN_pnl_pct,COIN_trades,COIN_win_rate,TSLA_pnl,TSLA_pnl_pct,TSLA_trades,TSLA_win_rate
+time_split,7399.17,7.4,330,53.9,6819.81,6.67,49.3,69,100000.0,107399.17,2062.94,2.06,144,49.3,3114.12,3.11,28,71.4,649.05,0.65,129,52.7,1573.04,1.57,29,65.5

@@ -1,0 +1,2 @@
+strategy,total_pnl,total_pnl_pct,total_trades,win_rate,max_drawdown,max_drawdown_pct,avg_hold_bars,trading_days,starting_balance,ending_balance,RIVN_pnl,RIVN_pnl_pct,RIVN_trades,RIVN_win_rate,COIN_pnl,COIN_pnl_pct,COIN_trades,COIN_win_rate,HOOD_pnl,HOOD_pnl_pct,HOOD_trades,HOOD_win_rate,HIMS_pnl,HIMS_pnl_pct,HIMS_trades,HIMS_win_rate
+vwap_revert,25094.82,25.09,454,52.9,11248.33,8.9,54.9,69,100000.0,125094.82,21651.52,21.65,136,58.8,439.96,0.44,130,50.8,4167.92,4.17,85,54.1,-1164.58,-1.16,103,46.6

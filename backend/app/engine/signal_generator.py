@@ -91,6 +91,7 @@ class TradingSignal:
     has_rsi_divergence: bool = False
     sr_strength: float = 0.0
     divergence_timeframe: str | None = None
+    entry_bar_idx: int | None = None  # bar index in full DataFrame (for vwap_revert)
 
 
 # ---------------------------------------------------------------------------
@@ -1142,3 +1143,166 @@ def check_exit_rsi_divergence_pct(
             return "max_hold"
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# VWAP Mean Reversion strategy (from strategy_lab research)
+# ---------------------------------------------------------------------------
+#
+# Entry: price deviates >1.25σ from daily-resetting VWAP + RSI confirmation
+#        + volume spike >1.5× avg. No entries before 10:00 or after 15:00 EST.
+# Exit:  price reverts to VWAP (primary target), 1% stop loss, max hold 390 bars.
+# Best on high-range, liquid tickers (RIVN, COIN, HOOD). Walk-forward validated.
+#
+# Research results (strategy_lab, 2026-03-03):
+#   +29.7% over 69 trading days at 50% position / 100% exposure (conservative)
+#   +47.0% at 75% position / 150% exposure (aggressive)
+#   All 3 walk-forward segments positive.
+
+_VWAP_REVERT_STOP_PCT = 0.02       # 2% stop loss (matches strategy_lab)
+_VWAP_REVERT_TARGET_PCT = 0.06     # 6% safety cap (target is VWAP)
+_VWAP_REVERT_MAX_HOLD = 195        # ~3.25 hours (matches strategy_lab)
+_VWAP_REVERT_SIGMA = 1.5           # min deviation from VWAP in std devs
+
+
+def _compute_daily_vwap(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    """Compute daily-resetting VWAP and rolling std of (close - VWAP).
+
+    Returns (vwap_series, vwap_std_series).
+    VWAP resets cumulative sums at each day boundary, matching the
+    standard institutional VWAP used in strategy_lab.
+    """
+    import numpy as np
+
+    close = df["close"].values
+    high = df["high"].values
+    low = df["low"].values
+    volume = df["volume"].values
+    typical = (high + low + close) / 3.0
+
+    n = len(df)
+    vwap_arr = np.full(n, np.nan)
+
+    # Detect day boundaries from the index
+    dates = pd.Series(df.index).dt.date
+    day_changes = (dates != dates.shift(1)).values.copy()
+    day_starts = list(np.where(day_changes)[0])
+    if not day_starts or day_starts[0] != 0:
+        day_starts.insert(0, 0)
+
+    boundaries = day_starts + [n]
+    for i in range(len(boundaries) - 1):
+        s = boundaries[i]
+        e = boundaries[i + 1]
+        tp_vol = typical[s:e] * volume[s:e]
+        cum_tp_vol = np.cumsum(tp_vol)
+        cum_vol = np.cumsum(volume[s:e])
+        mask = cum_vol > 0
+        vwap_arr[s:e] = np.where(mask, cum_tp_vol / cum_vol, np.nan)
+
+    vwap_series = pd.Series(vwap_arr, index=df.index)
+    diff = pd.Series(close - vwap_arr, index=df.index)
+    vwap_std = diff.rolling(20).std()
+
+    return vwap_series, vwap_std
+
+
+def generate_signals_vwap_revert(
+    analysis: AnalysisResult,
+    df: pd.DataFrame,
+    stop_loss_pct: float | None = None,
+    current_timestamp: "datetime | None" = None,
+    scan_config: "ScanConfig | None" = None,
+) -> list[TradingSignal]:
+    """VWAP Mean Reversion — thin wrapper delegating to app.engine.vwap_revert.
+
+    Kept for backwards compatibility. Both replay engine and trading engine
+    now call the shared module directly for pre-computed indicator paths.
+    """
+    from app.engine.vwap_revert import (
+        VWAPRevertParams,
+        compute_indicators,
+        check_entry,
+        compute_stops,
+    )
+
+    if len(df) < 30:
+        return []
+
+    params = VWAPRevertParams()
+    ind = compute_indicators(df)
+    bar = ind.n_bars - 1
+    result = check_entry(ind, bar, params)
+    if result is None:
+        return []
+
+    side, price = result
+    stop, target = compute_stops(price, side, params)
+
+    # Confidence
+    import numpy as np
+    vwap_val = ind.vwap_daily[bar]
+    vwap_s = ind.vwap_std[bar]
+    deviation = (price - vwap_val) / vwap_s if vwap_s > 0 else 0
+    rsi_val = ind.rsi_14[bar]
+    dev_strength = min(abs(deviation) / 3.0, 1.0)
+    rsi_extremity = abs(rsi_val - 50) / 50
+    confidence = min(0.90, 0.40 + dev_strength * 0.25 + rsi_extremity * 0.25)
+
+    reason = (
+        f"VWAP revert {side}: price ${price:.2f} is {deviation:+.1f}σ from "
+        f"VWAP ${vwap_val:.2f}, RSI {rsi_val:.0f} "
+        f"[SL={params.stop_pct*100:.1f}% T=VWAP]"
+    )
+
+    return [
+        TradingSignal(
+            symbol=analysis.symbol,
+            signal_type=side,
+            entry_price=price,
+            stop_loss=stop,
+            profit_target=target,
+            reason=reason,
+            pattern_type="vwap_revert",
+            confidence=confidence,
+            created_at=datetime.now(timezone.utc),
+            entry_bar_idx=bar,
+        )
+    ]
+
+
+def check_exit_vwap_revert(
+    analysis: AnalysisResult,
+    df: pd.DataFrame,
+    current_side: str,
+    entry_time: datetime | None = None,
+    current_time: datetime | None = None,
+    scan_config: "ScanConfig | None" = None,
+) -> str | None:
+    """Exit logic for VWAP revert — thin wrapper delegating to app.engine.vwap_revert.
+
+    Kept for backwards compatibility.
+    """
+    from app.engine.vwap_revert import (
+        VWAPRevertParams,
+        compute_indicators,
+        check_exit,
+    )
+
+    if len(df) < 20:
+        return None
+
+    params = VWAPRevertParams()
+    ind = compute_indicators(df)
+    bar = ind.n_bars - 1
+
+    # Estimate entry_bar from entry_time
+    entry_bar = 0
+    if entry_time is not None:
+        try:
+            entry_bar = max(0, int((df.index >= entry_time).sum()))
+            entry_bar = bar - entry_bar  # convert "bars since entry" to absolute bar index
+        except Exception:
+            entry_bar = 0
+
+    return check_exit(ind, bar, current_side, entry_bar, params)

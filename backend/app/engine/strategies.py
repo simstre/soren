@@ -66,6 +66,20 @@ STRATEGIES: list[StrategyDef] = [
         timeframe="1m",
     ),
     StrategyDef(
+        id="vwap_revert",
+        name="VWAP Mean Reversion",
+        description="Fade price deviations from daily VWAP. Enter when price is >1.5σ from VWAP with RSI + volume confirmation. Target = VWAP reversion. 2% stop, 195-bar max hold. Walk-forward validated: +47% over 69 trading days at 75%/150%.",
+        entry_rule="VWAP deviation >1.5σ + RSI extreme + volume spike → revert to VWAP",
+        scan_config=ScanConfig(
+            max_hold_bars=195, cooldown_bars=10,
+            use_pct_stops=True, stop_pct=0.02, target_pct=0.06,
+        ),
+        position_size_pct=0.75,
+        max_exposure_pct=1.0,
+        stop_loss_pct=0.02,
+        timeframe="1m",
+    ),
+    StrategyDef(
         id="rsi_divergence_sr",
         name="RSI Divergence + S/R",
         description="Enter when RSI divergence is detected on a lower timeframe AND price is near support/resistance. Adaptive multi-timeframe learning.",

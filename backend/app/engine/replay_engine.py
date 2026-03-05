@@ -20,6 +20,7 @@ from app.engine.signal_generator import (
     generate_signals_mean_reversion,
     generate_signals_momentum_breakout,
     generate_signals_vwap_bounce,
+    generate_signals_vwap_revert,
     generate_signals_exhaustion_reversal,
     generate_signals_refined_rsi,
     check_exit_mean_reversion,
@@ -29,8 +30,17 @@ from app.engine.signal_generator import (
     check_exit_refined_rsi,
     generate_signals_rsi_divergence_pct,
     check_exit_rsi_divergence_pct,
+    check_exit_vwap_revert,
     TimeframeParams,
     get_timeframe_params,
+)
+from app.engine.vwap_revert import (
+    VWAPRevertParams,
+    VWAPRevertIndicators,
+    compute_indicators as vwap_compute_indicators,
+    check_entry as vwap_check_entry,
+    check_exit as vwap_check_exit,
+    compute_stops as vwap_compute_stops,
 )
 from app.engine.divergence_tracker import (
     CANDIDATE_TIMEFRAMES,
@@ -89,6 +99,8 @@ class ReplayResults:
     max_drawdown_pct: float = 0.0
     starting_balance: float = 0.0
     ending_balance: float = 0.0
+    stop_loss_count: int = 0
+    max_hold_count: int = 0
     divergence_weights: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -109,6 +121,8 @@ class ReplayResults:
             "max_drawdown_pct": self.max_drawdown_pct,
             "starting_balance": self.starting_balance,
             "ending_balance": self.ending_balance,
+            "stop_loss_count": self.stop_loss_count,
+            "max_hold_count": self.max_hold_count,
             "divergence_weights": self.divergence_weights,
         }
 
@@ -137,6 +151,8 @@ class ReplayEngine:
         self._tf_params: TimeframeParams | None = None
         self._strategy_def = None
         self._headless: bool = False
+        self._vwap_indicators: dict[str, VWAPRevertIndicators] = {}
+        self._vwap_params: VWAPRevertParams = VWAPRevertParams()
 
     @property
     def running(self) -> bool:
@@ -232,6 +248,8 @@ class ReplayEngine:
 
             # Find where the actual backtest period starts
             start_ts = pd.Timestamp(start_date)
+            if not isinstance(df.index, pd.DatetimeIndex):
+                df.index = pd.to_datetime(df.index)
             if start_ts.tzinfo is None and df.index.tz is not None:
                 start_ts = start_ts.tz_localize(df.index.tz)
             trade_start_idx = df.index.searchsorted(start_ts)
@@ -275,6 +293,13 @@ class ReplayEngine:
 
                 if not self._div_dataframes[sym]:
                     self._div_dataframes[sym][timeframe] = symbol_dataframes[sym]
+
+        # Pre-compute VWAP revert indicators once over the full series
+        self._vwap_indicators = {}
+        if self._strategy == "vwap_revert":
+            for sym, df in symbol_dataframes.items():
+                self._vwap_indicators[sym] = vwap_compute_indicators(df)
+            logger.info("vwap_indicators_precomputed", symbols=list(self._vwap_indicators.keys()))
 
         # Build unified timeline from all symbols' trade periods
         all_timestamps: set = set()
@@ -391,28 +416,21 @@ class ReplayEngine:
         start_dt = datetime.strptime(start, "%Y-%m-%d")
         end_dt = datetime.strptime(end, "%Y-%m-%d")
 
-        # Clamp start to the oldest date yfinance can serve
-        earliest_allowed = datetime.now() - timedelta(days=max_age_days)
-        if start_dt < earliest_allowed:
-            start_dt = earliest_allowed
-            logger.info(
-                "replay_clamped_start",
-                symbol=symbol,
-                interval=interval,
-                original_start=start,
-                clamped_start=start_dt.strftime("%Y-%m-%d"),
-                max_age_days=max_age_days,
-            )
-
         if start_dt >= end_dt:
             return pd.DataFrame()
 
         # --- Cache lookup ---
         cached_df = load_cached(symbol, interval)
+
+        # Only clamp to yfinance age limit when we actually need to fetch.
+        # If cache fully covers the range, no clamping needed.
+        earliest_allowed = datetime.now() - timedelta(days=max_age_days)
         if cached_df is not None and not cached_df.empty:
             # Make start/end tz-aware to match cache index if needed
             s_ts = pd.Timestamp(start_dt)
             e_ts = pd.Timestamp(end_dt)
+            if not isinstance(cached_df.index, pd.DatetimeIndex):
+                cached_df.index = pd.to_datetime(cached_df.index)
             if s_ts.tzinfo is None and cached_df.index.tz is not None:
                 s_ts = s_ts.tz_localize(cached_df.index.tz)
                 e_ts = e_ts.tz_localize(cached_df.index.tz)
@@ -456,8 +474,19 @@ class ReplayEngine:
         # --- Fetch missing ranges from yfinance ---
         fetched_chunks: list[pd.DataFrame] = []
         for gap_start, gap_end in gaps:
+            # Clamp gap to yfinance age limit (can't fetch older than max_age_days)
+            clamped_gap_start = max(gap_start, earliest_allowed)
+            if clamped_gap_start >= gap_end:
+                logger.info(
+                    "replay_clamped_start",
+                    symbol=symbol, interval=interval,
+                    original_start=gap_start.strftime("%Y-%m-%d"),
+                    clamped_start=clamped_gap_start.strftime("%Y-%m-%d"),
+                    max_age_days=max_age_days,
+                )
+                continue
             chunks = await cls._fetch_range(
-                ticker, gap_start, gap_end, interval, symbol, max_chunk_days,
+                ticker, clamped_gap_start, gap_end, interval, symbol, max_chunk_days,
             )
             fetched_chunks.extend(chunks)
 
@@ -471,6 +500,11 @@ class ReplayEngine:
             return pd.DataFrame()
 
         combined = pd.concat(all_parts)
+        # Normalize columns: lowercase, deduplicate, keep only OHLCV
+        combined.columns = [c.lower() for c in combined.columns]
+        combined = combined.loc[:, ~combined.columns.duplicated()]
+        ohlcv = [c for c in ["open", "high", "low", "close", "volume"] if c in combined.columns]
+        combined = combined[ohlcv]
         combined = combined[~combined.index.duplicated(keep="first")].sort_index()
 
         # Save the full merged dataset back to cache
@@ -479,6 +513,9 @@ class ReplayEngine:
         # Return only the requested slice
         s_ts = pd.Timestamp(start_dt)
         e_ts = pd.Timestamp(end_dt)
+        # Ensure index is a DatetimeIndex before checking tz
+        if not isinstance(combined.index, pd.DatetimeIndex):
+            combined.index = pd.to_datetime(combined.index)
         if s_ts.tzinfo is None and combined.index.tz is not None:
             s_ts = s_ts.tz_localize(combined.index.tz)
             e_ts = e_ts.tz_localize(combined.index.tz)
@@ -663,11 +700,14 @@ class ReplayEngine:
                     if self._cooldown_bars.get(sym, 0) > 0:
                         self._cooldown_bars[sym] -= 1
 
-                    # Run analysis + signals (full window, no .copy() to avoid O(n²) allocation)
+                    # Run analysis + signals (cap window to avoid O(n²) slowdown)
                     if bar_pos >= min_bars:
-                        window_df = df.iloc[: bar_pos + 1]
+                        max_window = 500  # ~1.3 trading days of 1m bars
+                        start_pos = max(0, bar_pos + 1 - max_window)
+                        window_df = df.iloc[start_pos: bar_pos + 1]
                         signals = self._generate_signals_for_bar(
                             sym, window_df, timestamp, close_price,
+                            full_bar_idx=bar_pos,
                         )
                         all_signals.extend(signals)
 
@@ -682,6 +722,10 @@ class ReplayEngine:
                     "balance": round(balance, 2),
                     "bar_index": bar_idx,
                 })
+
+                # Yield to event loop periodically so stop requests can be processed
+                if instant and bar_idx % 10 == 0:
+                    await asyncio.sleep(0)
 
                 if not headless:
                     if instant:
@@ -768,9 +812,14 @@ class ReplayEngine:
         df: pd.DataFrame,
         timestamp,
         close_price: float,
+        full_bar_idx: int = -1,
     ) -> list[TradingSignal]:
         """Generate signals for one symbol at one bar. Handles exits and entries."""
         try:
+            # --- VWAP revert: use pre-computed indicators (bypass run_analysis) ---
+            if self._strategy == "vwap_revert":
+                return self._vwap_revert_bar(symbol, df, timestamp, close_price, full_bar_idx)
+
             analysis = run_analysis(symbol, df)
 
             if not self._headless:
@@ -852,6 +901,93 @@ class ReplayEngine:
             logger.error("replay_signal_gen_error", symbol=symbol, error=str(e))
             return []
 
+    def _vwap_revert_bar(
+        self,
+        symbol: str,
+        df: pd.DataFrame,
+        timestamp,
+        close_price: float,
+        full_bar_idx: int,
+    ) -> list[TradingSignal]:
+        """VWAP revert signal generation using pre-computed indicators.
+
+        Bypasses run_analysis() entirely — uses O(1) lookups into
+        indicator arrays pre-computed over the full series.
+        """
+        ind = self._vwap_indicators.get(symbol)
+        if ind is None or full_bar_idx < 0 or full_bar_idx >= ind.n_bars:
+            return []
+
+        params = self._vwap_params
+
+        # --- Check exit on open positions first ---
+        current_side = self.broker.get_position_side(symbol)
+        if current_side is not None:
+            entry_bar = None
+            for tr in reversed(self._trade_records):
+                if tr["status"] == "OPEN" and tr["symbol"] == symbol:
+                    entry_bar = tr.get("entry_bar_idx")
+                    break
+            if entry_bar is not None:
+                exit_reason = vwap_check_exit(ind, full_bar_idx, current_side, entry_bar, params)
+                if exit_reason:
+                    ts_str = timestamp.isoformat() if hasattr(timestamp, "isoformat") else str(timestamp)
+                    closed_trade = self.broker.close_position(symbol, close_price, exit_reason=exit_reason)
+                    if closed_trade:
+                        self._close_trade_record(closed_trade, ts_str, exit_reason)
+            # Re-check after potential exit
+            current_side = self.broker.get_position_side(symbol)
+
+        # If still in a position, no new entry
+        if current_side is not None:
+            return []
+
+        # Performance gate
+        if symbol in self._gated_symbols:
+            return []
+
+        # Cooldown
+        if self._cooldown_bars.get(symbol, 0) > 0:
+            return []
+
+        # Entry check via pre-computed indicators
+        result = vwap_check_entry(ind, full_bar_idx, params)
+        if result is None:
+            return []
+
+        side, price = result
+        stop, target = vwap_compute_stops(price, side, params)
+
+        # Confidence (matches signal_generator version)
+        vwap_val = ind.vwap_daily[full_bar_idx]
+        vwap_s = ind.vwap_std[full_bar_idx]
+        deviation = (price - vwap_val) / vwap_s if vwap_s > 0 else 0
+        rsi_val = ind.rsi_14[full_bar_idx]
+        dev_strength = min(abs(deviation) / 3.0, 1.0)
+        rsi_extremity = abs(rsi_val - 50) / 50
+        confidence = min(0.90, 0.40 + dev_strength * 0.25 + rsi_extremity * 0.25)
+
+        reason = (
+            f"VWAP revert {side}: price ${price:.2f} is {deviation:+.1f}σ from "
+            f"VWAP ${vwap_val:.2f}, RSI {rsi_val:.0f} "
+            f"[SL={params.stop_pct*100:.1f}% T=VWAP]"
+        )
+
+        return [
+            TradingSignal(
+                symbol=symbol,
+                signal_type=side,
+                entry_price=price,
+                stop_loss=stop,
+                profit_target=target,
+                reason=reason,
+                pattern_type="vwap_revert",
+                confidence=confidence,
+                created_at=datetime.now(timezone.utc),
+                entry_bar_idx=full_bar_idx,
+            )
+        ]
+
     def _check_and_exit(
         self,
         symbol: str,
@@ -928,8 +1064,11 @@ class ReplayEngine:
         ts_str = timestamp.isoformat() if hasattr(timestamp, "isoformat") else str(timestamp)
 
         for signal in all_signals:
-            # Exposure cap = min(1.0, position_size × 5), same formula as live auto-scale
-            max_exposure = min(1.0, self._position_size_pct * 5)
+            # Use strategy's max_exposure_pct if available, else auto-scale
+            if self._strategy_def and self._strategy_def.max_exposure_pct:
+                max_exposure = self._strategy_def.max_exposure_pct
+            else:
+                max_exposure = min(1.0, self._position_size_pct * 5)
             decision = validate_signal(
                 signal, balance, buying_power, open_symbols, total_exposure,
                 position_size_pct=self._position_size_pct,
@@ -977,6 +1116,9 @@ class ReplayEngine:
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
+            # Store bar index for vwap_revert bar-based exit tracking
+            if signal.entry_bar_idx is not None:
+                trade_record["entry_bar_idx"] = signal.entry_bar_idx
 
             self._trade_records.append(trade_record)
             if not self._headless:
@@ -1113,6 +1255,10 @@ class ReplayEngine:
 
         ending_balance = equity_curve[-1]["balance"] if equity_curve else starting
 
+        # Count exit reasons
+        stop_loss_count = sum(1 for t in closed if t.get("exit_reason") == "stop_loss")
+        max_hold_count = sum(1 for t in closed if t.get("exit_reason") == "max_hold")
+
         # Capture final divergence weights (aggregate per-symbol)
         div_weights: dict[str, float] = {}
         for sym, tracker in self._trackers.items():
@@ -1138,6 +1284,8 @@ class ReplayEngine:
             max_drawdown_pct=round(max_drawdown_pct, 2),
             starting_balance=starting,
             ending_balance=round(ending_balance, 2),
+            stop_loss_count=stop_loss_count,
+            max_hold_count=max_hold_count,
             divergence_weights={tf: round(w, 3) for tf, w in div_weights.items()},
         )
 

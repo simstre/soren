@@ -2,14 +2,10 @@ from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Query, HTTPException, Response
 import pandas as pd
-import requests
 import yfinance as yf
 import structlog
 
 from app.schemas.candle import CandleData
-
-# Shared uncached session so yfinance doesn't serve stale data
-_yf_session = requests.Session()
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/api/candles", tags=["candles"])
@@ -54,7 +50,7 @@ async def get_candles(
         raise HTTPException(status_code=400, detail=f"Unsupported timeframe: {timeframe}")
 
     try:
-        ticker = yf.Ticker(symbol, session=_yf_session)
+        ticker = yf.Ticker(symbol)
 
         if end:
             # Fetch a historical range ending before `end`

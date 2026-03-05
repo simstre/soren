@@ -18,6 +18,7 @@ import structlog
 
 from app.scanner.fitness import FitnessScore
 from app.scanner.universe import fetch_us_equity_universe, batch_download_daily, flatten_batch_columns
+from app.engine.strategies import ScanConfig
 
 logger = structlog.get_logger()
 
@@ -271,7 +272,10 @@ def _rank_by_percentile(metrics_df: pd.DataFrame, top_n: int = 4) -> list[tuple[
 
 # ── Public API ──
 
-async def run_percentile_scan(top_n: int = 4) -> list[FitnessScore]:
+async def run_percentile_scan(
+    top_n: int = 4,
+    scan_config: ScanConfig | None = None,
+) -> list[FitnessScore]:
     """Run percentile-based scan on full US equity universe.
 
     Returns FitnessScore objects for API compatibility with the fitness scanner.
@@ -291,6 +295,22 @@ async def run_percentile_scan(top_n: int = 4) -> list[FitnessScore]:
     metrics_df = pd.DataFrame.from_dict(rows, orient="index")
     logger.info("percentile_metrics_computed", count=len(metrics_df))
 
+    if metrics_df.empty:
+        return []
+
+    # Phase 2b: ATR% hard filter — remove tickers outside viable range
+    atr_min = 2.5
+    atr_max = 12.0
+    if scan_config is not None:
+        atr_min = getattr(scan_config, "atr_min_pct", atr_min) or atr_min
+        atr_max = getattr(scan_config, "atr_max_pct", atr_max) or atr_max
+    if "atr_pct" in metrics_df.columns:
+        before = len(metrics_df)
+        metrics_df = metrics_df[
+            (metrics_df["atr_pct"] >= atr_min) & (metrics_df["atr_pct"] <= atr_max)
+        ]
+        logger.info("percentile_atr_filter", before=before, after=len(metrics_df),
+                     atr_min=atr_min, atr_max=atr_max)
     if metrics_df.empty:
         return []
 

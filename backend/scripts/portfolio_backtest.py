@@ -4,11 +4,9 @@
 Iterates bar-by-bar across all tickers simultaneously using a single
 ReplayBrokerAdapter (shared balance/positions). Enforces total exposure cap.
 
-Test matrix:
-  - Tickers: Top 5 from fitness scan (UNH, AAPL, GOOGL, MSFT, TSLA)
-  - Position sizes per ticker: 25%, 33%, 50%, 100%
-  - Timeframe: 1m, 7-day window
-  - Total exposure cap: 100%
+Uses TWS/IB for 90-day 1m historical data (falls back to yfinance if TWS
+unavailable, capped at ~30 days). Tickers are selected by the percentile
+scanner at runtime.
 
 Usage:
     cd backend && python -m scripts.portfolio_backtest
@@ -19,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import sys
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -29,17 +28,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.broker.replay_adapter import ReplayBrokerAdapter
 from app.engine.replay_engine import ReplayEngine, TIMEFRAME_MAP, _normalize_symbol
-from app.engine.candle_cache import load_cached, save_cache
+from app.engine.candle_cache import load_cached, save_cache, get_cache_range
 from app.analysis.pipeline import run_analysis
 from app.analysis.indicators import rsi as calc_rsi
 from app.engine.signal_generator import (
-    generate_signals,
-    check_reversal_signal,
     detect_rsi_divergence,
-    generate_signals_refined_rsi,
-    check_exit_refined_rsi,
+    generate_signals_rsi_divergence_pct,
+    check_exit_rsi_divergence_pct,
     get_timeframe_params,
 )
+from app.engine.strategies import get_strategy, ScanConfig
 from app.engine.divergence_tracker import (
     CANDIDATE_TIMEFRAMES,
     DivergenceSignal,
@@ -54,29 +52,211 @@ structlog.configure(processors=[structlog.dev.ConsoleRenderer()])
 logger = structlog.get_logger()
 
 # ── Configuration ──────────────────────────────────────────────────────
-TICKERS = ["UNH", "AAPL", "GOOGL", "MSFT", "TSLA", "NVDA", "AMZN", "META", "PFE", "JPM"]
-POSITION_SIZES = [0.25]
+TICKERS: list[str] = []  # populated by scanner at runtime
+POSITION_SIZES = [0.50]  # v8 default
 TIMEFRAME = "1m"
-STRATEGY = "refined_rsi"
+STRATEGY = "rsi_divergence_pct"  # v8
 STARTING_BALANCE = 100_000.0
 MAX_EXPOSURE_PCT = 1.00  # 100% total exposure cap
 LOOKBACK_BARS = 200
+DAYS = 90  # 90-day backtest window
 
-# Date range: 29 calendar days
+# Date range
 END_DATE = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-START_DATE = (datetime.now() - timedelta(days=29)).strftime("%Y-%m-%d")
+START_DATE = (datetime.now() - timedelta(days=DAYS)).strftime("%Y-%m-%d")
+
+# TWS pacing
+IB_HOST = "127.0.0.1"
+IB_PORT = 7497
+IB_CLIENT_ID = 10  # separate from live engine (clientId=1)
+IB_CHUNK_DAYS = 30  # 30 days per request
+IB_PACING_DELAY = 12  # seconds between requests (stay under 60/10min)
+
+# Fallback tickers if scanner fails
+FALLBACK_TICKERS = ["TSLA", "CEG", "PLTR", "RIVN"]
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "backtest_results"
 
+# Load v8 strategy config
+_strategy_def = get_strategy(STRATEGY)
+SCAN_CONFIG: ScanConfig = _strategy_def.scan_config if _strategy_def else ScanConfig(
+    max_hold_bars=390, cooldown_bars=60,
+    use_pct_stops=True, stop_pct=0.02, target_pct=0.06,
+)
+
+
+async def run_scanner(top_n: int = 6) -> list[str]:
+    """Run percentile scanner to pick tickers. Falls back to hardcoded list."""
+    try:
+        from app.scanner.percentile_scanner import run_percentile_scan
+        results = await run_percentile_scan(top_n=top_n, scan_config=SCAN_CONFIG)
+        if results:
+            symbols = [r.symbol for r in results]
+            logger.info("scanner_picked", tickers=symbols)
+            return symbols
+    except Exception as e:
+        logger.warning("scanner_failed", error=str(e))
+    logger.info("scanner_fallback", tickers=FALLBACK_TICKERS)
+    return list(FALLBACK_TICKERS)
+
+
+async def fetch_ib_historical_1m(
+    symbols: list[str], start: str, end: str,
+) -> dict[str, pd.DataFrame]:
+    """Fetch 90-day 1m data from TWS in 30-day chunks with pacing.
+
+    - Checks parquet cache first; skips fetch if cache covers the date range.
+    - On IB connection failure: warns and returns empty dict (caller falls back
+      to yfinance).
+    """
+    start_dt = pd.Timestamp(start)
+    end_dt = pd.Timestamp(end)
+    result: dict[str, pd.DataFrame] = {}
+
+    try:
+        from ib_async import IB, Stock
+    except ImportError:
+        logger.warning("ib_async_not_installed", msg="falling back to yfinance")
+        return result
+
+    ib = IB()
+    try:
+        await ib.connectAsync(host=IB_HOST, port=IB_PORT, clientId=IB_CLIENT_ID)
+        logger.info("ib_backtest_connected", host=IB_HOST, port=IB_PORT, clientId=IB_CLIENT_ID)
+    except Exception as e:
+        logger.warning("ib_connect_failed", error=str(e), msg="falling back to yfinance")
+        return result
+
+    try:
+        for sym in symbols:
+            # Check cache coverage
+            cache_range = get_cache_range(sym, "1m")
+            if cache_range:
+                cached_start, cached_end = cache_range
+                if cached_start <= start_dt.to_pydatetime().replace(tzinfo=cached_start.tzinfo) and \
+                   cached_end >= end_dt.to_pydatetime().replace(tzinfo=cached_end.tzinfo) - timedelta(days=2):
+                    cached_df = load_cached(sym, "1m")
+                    if cached_df is not None and not cached_df.empty:
+                        logger.info("ib_cache_hit", symbol=sym, bars=len(cached_df))
+                        result[sym] = cached_df
+                        continue
+
+            # Build 30-day chunks working backwards from end
+            contract = Stock(sym, "SMART", "USD")
+            await ib.qualifyContractsAsync(contract)
+
+            chunks: list[pd.DataFrame] = []
+            chunk_end = end_dt
+            chunk_num = 0
+
+            while chunk_end > start_dt:
+                chunk_num += 1
+                duration_days = min(IB_CHUNK_DAYS, (chunk_end - start_dt).days + 1)
+                if duration_days <= 0:
+                    break
+
+                end_str = chunk_end.strftime("%Y%m%d %H:%M:%S") + " US/Eastern"
+                logger.info(
+                    "ib_fetch_chunk",
+                    symbol=sym, chunk=chunk_num,
+                    duration=f"{duration_days} D", end=end_str,
+                )
+
+                retry = 0
+                bars = None
+                while retry < 2:
+                    try:
+                        bars = await ib.reqHistoricalDataAsync(
+                            contract,
+                            endDateTime=end_str,
+                            durationStr=f"{duration_days} D",
+                            barSizeSetting="1 min",
+                            whatToShow="TRADES",
+                            useRTH=True,
+                            formatDate=2,
+                        )
+                        break
+                    except Exception as e:
+                        err_str = str(e).lower()
+                        if "pacing" in err_str or "limit" in err_str:
+                            retry += 1
+                            logger.warning("ib_pacing_violation", symbol=sym, retry=retry)
+                            await asyncio.sleep(30)
+                        else:
+                            logger.error("ib_fetch_error", symbol=sym, error=str(e))
+                            break
+
+                if bars:
+                    records = []
+                    for bar in bars:
+                        records.append({
+                            "open": bar.open,
+                            "high": bar.high,
+                            "low": bar.low,
+                            "close": bar.close,
+                            "volume": bar.volume,
+                        })
+                    idx = pd.DatetimeIndex([bar.date for bar in bars], name="Datetime")
+                    chunk_df = pd.DataFrame(records, index=idx)
+                    chunks.append(chunk_df)
+                    logger.info("ib_chunk_fetched", symbol=sym, chunk=chunk_num, bars=len(chunk_df))
+
+                chunk_end -= timedelta(days=duration_days)
+
+                # Pacing delay between requests
+                if chunk_end > start_dt:
+                    logger.info("ib_pacing_delay", seconds=IB_PACING_DELAY)
+                    await asyncio.sleep(IB_PACING_DELAY)
+
+            if chunks:
+                merged = pd.concat(chunks)
+                merged = merged[~merged.index.duplicated(keep="first")]
+                merged = merged.sort_index()
+                merged.columns = [c.lower() for c in merged.columns]
+
+                # Save to cache
+                save_cache(sym, "1m", merged)
+                result[sym] = merged
+                logger.info("ib_symbol_done", symbol=sym, total_bars=len(merged))
+            else:
+                logger.warning("ib_no_data", symbol=sym)
+
+            # Pacing delay between symbols
+            if sym != symbols[-1]:
+                await asyncio.sleep(IB_PACING_DELAY)
+
+    finally:
+        if ib.isConnected():
+            ib.disconnect()
+            logger.info("ib_backtest_disconnected")
+
+    return result
+
 
 async def fetch_ticker_data(
-    symbol: str, start: str, end: str, interval: str
+    symbol: str, start: str, end: str, interval: str,
 ) -> pd.DataFrame:
-    """Fetch historical data for a ticker, using cache when available."""
+    """Load data from parquet cache (populated by TWS fetch). Falls back to yfinance."""
+    # Try cache first
+    cached = load_cached(symbol, interval)
+    if cached is not None and not cached.empty:
+        # Filter to requested date range
+        start_ts = pd.Timestamp(start)
+        end_ts = pd.Timestamp(end)
+        if cached.index.tz is not None:
+            if start_ts.tzinfo is None:
+                start_ts = start_ts.tz_localize(cached.index.tz)
+            if end_ts.tzinfo is None:
+                end_ts = end_ts.tz_localize(cached.index.tz)
+        filtered = cached[(cached.index >= start_ts) & (cached.index <= end_ts)]
+        if not filtered.empty:
+            filtered.columns = [c.lower() for c in filtered.columns]
+            return filtered
+
+    # Fallback to yfinance (limited to ~30 days for 1m)
+    logger.warning("cache_miss_yfinance_fallback", symbol=symbol)
     yf_symbol = _normalize_symbol(symbol)
     ticker = yf.Ticker(yf_symbol)
-
-    # Use ReplayEngine's chunked fetcher for caching
     df = await ReplayEngine._fetch_chunked(ticker, start, end, interval, symbol)
     if df.empty:
         logger.warning("no_data", symbol=symbol)
@@ -253,7 +433,7 @@ def _handle_closed_trade(
                 tracker.record_outcome(div_tf, pnl > 0)
 
             if pnl < 0:
-                cooldown_bars[symbol] = tf_params.cooldown_bars if tf_params else 6
+                cooldown_bars[symbol] = SCAN_CONFIG.cooldown_bars
             break
 
 
@@ -309,18 +489,17 @@ async def _process_bar(
     per_ticker_wins: dict,
     max_exposure_pct: float,
 ):
-    """Run analysis → signals → risk → order for one ticker at one bar."""
+    """Run analysis -> v8 signals -> risk -> order for one ticker at one bar."""
     try:
         analysis = run_analysis(symbol, df)
-        close_prices = df["close"].tolist()
 
-        gen_fn = generate_signals_refined_rsi
-        signals = gen_fn(
+        signals = generate_signals_rsi_divergence_pct(
             analysis, df,
-            stop_loss_pct=0.0,  # ATR-based stops
+            stop_loss_pct=SCAN_CONFIG.stop_pct,
             best_divergence=best_divergence,
             current_timestamp=timestamp,
             tf_params=tf_params,
+            scan_config=SCAN_CONFIG,
         )
 
         current_side = broker.get_position_side(symbol)
@@ -329,12 +508,14 @@ async def _process_bar(
         # Check for exit if we have a position
         if current_side is not None:
             entry_time = None
+            entry_price = None
             for tr in reversed(trade_records):
                 if tr["status"] == "OPEN" and tr["symbol"] == symbol:
                     try:
                         entry_time = datetime.fromisoformat(tr["entry_time"])
                     except (ValueError, TypeError):
                         pass
+                    entry_price = tr.get("entry_price")
                     break
 
             current_time = timestamp if isinstance(timestamp, datetime) else None
@@ -344,16 +525,17 @@ async def _process_bar(
                 except (ValueError, TypeError):
                     pass
 
-            reversal = check_exit_refined_rsi(
-                    analysis, df, current_side,
-                    entry_time=entry_time,
-                    current_time=current_time,
-                    tf_params=tf_params,
-                )
+            exit_reason = check_exit_rsi_divergence_pct(
+                analysis, df, current_side,
+                entry_time=entry_time,
+                current_time=current_time,
+                tf_params=tf_params,
+                entry_price=entry_price,
+                scan_config=SCAN_CONFIG,
+            )
 
-            if reversal:
+            if exit_reason:
                 close_price = float(df["close"].iloc[-1])
-                exit_reason = reversal if isinstance(reversal, str) else "reversal"
                 closed_trade = broker.close_position(symbol, close_price, exit_reason=exit_reason)
                 if closed_trade:
                     _close_trade_record(
@@ -363,26 +545,8 @@ async def _process_bar(
                         per_ticker_pnl, per_ticker_trades, per_ticker_wins,
                     )
                     current_side = None
-            elif signals:
-                opposite = [
-                    s for s in signals
-                    if s.signal_type != current_side and s.has_rsi_divergence
-                ]
-                if opposite:
-                    best_opposite = max(opposite, key=lambda s: s.confidence)
-                    close_price = best_opposite.entry_price
-                    closed_trade = broker.close_position(symbol, close_price, exit_reason="position_flip")
-                    if closed_trade:
-                        _close_trade_record(
-                            closed_trade, ts_str, best_opposite.reason,
-                            trade_records, tracker,
-                            cooldown_bars, symbol, tf_params,
-                            per_ticker_pnl, per_ticker_trades, per_ticker_wins,
-                        )
-                        current_side = None
-                else:
-                    return
             else:
+                # v8: no position-flip logic; only exit on max_hold or stop_loss
                 return
 
         if current_side is not None:
@@ -487,7 +651,7 @@ def _close_trade_record(
                 tracker.record_outcome(div_tf, pnl > 0)
 
             if pnl < 0:
-                cooldown_bars[symbol] = tf_params.cooldown_bars if tf_params else 6
+                cooldown_bars[symbol] = SCAN_CONFIG.cooldown_bars
             break
 
 
@@ -522,8 +686,21 @@ def _build_portfolio_results(
 
     ending_balance = equity_curve[-1]["balance"] if equity_curve else starting
 
-    # Monthly PnL estimate (based on 7-day window → extrapolate to 21 trading days)
-    trading_days = 7
+    # Compute actual trading days from trade timeline
+    trading_days = 1
+    if closed:
+        trade_times = []
+        for t in closed:
+            for key in ("entry_time", "exit_time"):
+                ts = t.get(key)
+                if ts:
+                    try:
+                        trade_times.append(pd.Timestamp(ts).date())
+                    except Exception:
+                        pass
+        if trade_times:
+            unique_days = len(set(trade_times))
+            trading_days = max(unique_days, 1)
     monthly_pnl_pct = (total_pnl_pct / trading_days * 21) if trading_days > 0 else 0
 
     # Per-ticker breakdown
@@ -543,6 +720,7 @@ def _build_portfolio_results(
         "total_pnl": round(total_pnl, 2),
         "total_pnl_pct": round(total_pnl_pct, 2),
         "monthly_pnl_pct_est": round(monthly_pnl_pct, 2),
+        "trading_days": trading_days,
         "win_rate": round(win_rate, 1),
         "total_trades": len(closed),
         "winning_trades": len(wins),
@@ -556,26 +734,63 @@ def _build_portfolio_results(
 
 
 async def main():
+    global TICKERS
+
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    csv_path = OUTPUT_DIR / f"portfolio_{timestamp}.csv"
+    ts_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    csv_path = OUTPUT_DIR / f"portfolio_{ts_str}.csv"
+
+    # Step 1: Run scanner to pick tickers (skip if pre-set)
+    print(f"\n{'='*80}")
+    if not TICKERS:
+        print("  STEP 1: Running percentile scanner...")
+        print(f"{'='*80}")
+        TICKERS = await run_scanner(top_n=6)
+    else:
+        print(f"  STEP 1: Using pre-set tickers (scanner skipped)")
+        print(f"{'='*80}")
+    print(f"  Selected tickers: {', '.join(TICKERS)}")
+
+    # Step 2: Fetch 90-day 1m data from TWS
+    print(f"\n{'='*80}")
+    print(f"  STEP 2: Fetching {DAYS}-day 1m data from TWS...")
+    print(f"  Pacing: {IB_CHUNK_DAYS}d chunks, {IB_PACING_DELAY}s delay between requests")
+    print(f"  Estimated time: ~{len(TICKERS) * 3 * IB_PACING_DELAY / 60:.1f} min for {len(TICKERS)} tickers")
+    print(f"{'='*80}")
+
+    lookback_start = ReplayEngine._shift_date(START_DATE, TIMEFRAME, LOOKBACK_BARS)
+    ib_data = await fetch_ib_historical_1m(TICKERS, lookback_start, END_DATE)
+
+    if ib_data:
+        print(f"  TWS: fetched data for {len(ib_data)} tickers")
+        for sym, df in ib_data.items():
+            span = (df.index.max() - df.index.min()).days if not df.empty else 0
+            print(f"    {sym}: {len(df)} bars, {span} days")
+    else:
+        print("  TWS unavailable — will fall back to yfinance (~30 days max)")
+
+    # Step 3: Run portfolio backtest
+    print(f"\n{'='*80}")
+    print(f"  STEP 3: Running v8 portfolio backtest")
+    print(f"  Tickers: {', '.join(TICKERS)}")
+    print(f"  Timeframe: {TIMEFRAME}  |  Period: {START_DATE} -> {END_DATE} ({DAYS}d)")
+    print(f"  Strategy: {STRATEGY}  |  Exposure cap: {MAX_EXPOSURE_PCT*100:.0f}%")
+    print(f"  Stop: {SCAN_CONFIG.stop_pct*100:.0f}%  |  Target: {SCAN_CONFIG.target_pct*100:.0f}%  |  Max hold: {SCAN_CONFIG.max_hold_bars} bars")
+    print(f"{'='*80}\n")
 
     all_results: list[dict] = []
-
-    print(f"\n{'='*80}")
-    print(f"  PORTFOLIO BACKTEST — {len(TICKERS)} tickers × {len(POSITION_SIZES)} position sizes")
-    print(f"  Tickers: {', '.join(TICKERS)}")
-    print(f"  Timeframe: {TIMEFRAME}  |  Period: {START_DATE} → {END_DATE}")
-    print(f"  Strategy: {STRATEGY}  |  Exposure cap: {MAX_EXPOSURE_PCT*100:.0f}%")
-    print(f"{'='*80}\n")
 
     for pos_size in POSITION_SIZES:
         print(f"\n--- Position size: {pos_size*100:.0f}% per ticker ---")
         result = await run_portfolio_backtest(pos_size)
         all_results.append(result)
 
+        if "error" in result:
+            print(f"  ERROR: {result['error']}")
+            continue
+
         print(f"  Total PnL: ${result['total_pnl']:+,.2f} ({result['total_pnl_pct']:+.2f}%)")
-        print(f"  Monthly PnL est: {result['monthly_pnl_pct_est']:+.2f}%")
+        print(f"  Trading days: {result['trading_days']}  |  Monthly PnL est: {result['monthly_pnl_pct_est']:+.2f}%")
         print(f"  Win rate: {result['win_rate']:.1f}% ({result['winning_trades']}W / {result['losing_trades']}L)")
         print(f"  Max drawdown: ${result['max_drawdown']:,.2f} ({result['max_drawdown_pct']:.2f}%)")
         print(f"  Ending balance: ${result['ending_balance']:,.2f}")
@@ -585,10 +800,10 @@ async def main():
                   f"Trades: {tb['trades']}  Win: {tb['win_rate']:.0f}%")
 
     # Write CSV summary
-    if all_results:
+    if all_results and "error" not in all_results[0]:
         fieldnames = [
             "position_size_pct", "total_pnl", "total_pnl_pct", "monthly_pnl_pct_est",
-            "win_rate", "total_trades", "winning_trades", "losing_trades",
+            "trading_days", "win_rate", "total_trades", "winning_trades", "losing_trades",
             "max_drawdown", "max_drawdown_pct", "starting_balance", "ending_balance",
         ]
         # Add per-ticker columns
@@ -599,7 +814,9 @@ async def main():
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             for r in all_results:
-                row = {k: r[k] for k in fieldnames[:12]}
+                if "error" in r:
+                    continue
+                row = {k: r.get(k, "") for k in fieldnames[:13]}
                 for sym in TICKERS:
                     tb = r.get("ticker_breakdown", {}).get(sym, {})
                     row[f"{sym}_pnl"] = tb.get("pnl", 0)
@@ -612,13 +829,17 @@ async def main():
 
     # Summary
     print(f"\n{'='*80}")
-    print("  SUMMARY — Is 5% monthly achievable?")
+    print(f"  SUMMARY — v8 90-day backtest ({DAYS}d)")
     print(f"{'='*80}")
     for r in all_results:
+        if "error" in r:
+            continue
         pct = r["position_size_pct"]
         monthly = r["monthly_pnl_pct_est"]
+        days = r["trading_days"]
         achievable = "YES" if monthly >= 5.0 else "NO"
-        print(f"  {pct*100:3.0f}% position → {monthly:+.2f}% monthly est → 5% target: {achievable}")
+        print(f"  {pct*100:3.0f}% position | {days} trading days | "
+              f"{monthly:+.2f}% monthly est | 5% target: {achievable}")
     print()
 
 

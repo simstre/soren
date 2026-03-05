@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Callable, Awaitable
 
+import pandas as pd
 import structlog
 
 from app.broker.base import BrokerAdapter
@@ -17,6 +18,7 @@ class IBAdapter(BrokerAdapter):
     def __init__(self):
         self._ib = None
         self._subscriptions: dict[str, object] = {}
+        self._live_bar_subscriptions: dict[str, object] = {}
         self._account: str = ""
         self._currency: str = "USD"  # detected from account on connect
         self._initial_balance: float = 0.0  # captured on connect
@@ -212,6 +214,72 @@ class IBAdapter(BrokerAdapter):
         if symbol in self._subscriptions:
             self._ib.cancelRealTimeBars(self._subscriptions[symbol])
             del self._subscriptions[symbol]
+
+    async def subscribe_live_bars(
+        self,
+        symbol: str,
+        callback: Callable[[dict], Awaitable[None]],
+        lookback_days: int = 2,
+    ) -> pd.DataFrame:
+        """Subscribe to streaming 1-min bars via reqHistoricalData(keepUpToDate=True).
+
+        Returns a warmup DataFrame of historical 1-min bars.
+        Each new completed bar fires the callback with a bar dict.
+        """
+        from ib_async import Stock
+
+        contract = Stock(symbol, "SMART", "USD")
+        await self._ib.qualifyContractsAsync(contract)
+
+        bars = await self._ib.reqHistoricalDataAsync(
+            contract,
+            endDateTime="",
+            durationStr=f"{lookback_days} D",
+            barSizeSetting="1 min",
+            whatToShow="TRADES",
+            useRTH=True,
+            formatDate=2,
+            keepUpToDate=True,
+        )
+
+        # Build warmup DataFrame from returned BarDataList
+        records = []
+        for bar in bars:
+            records.append({
+                "open": bar.open,
+                "high": bar.high,
+                "low": bar.low,
+                "close": bar.close,
+                "volume": bar.volume,
+            })
+        idx = pd.DatetimeIndex([bar.date for bar in bars], name="Datetime")
+        warmup_df = pd.DataFrame(records, index=idx) if records else pd.DataFrame()
+
+        # Attach update handler for new bars
+        def on_bar_update(bars, has_new_bar):
+            if has_new_bar and len(bars) > 0:
+                bar = bars[-1]
+                bar_data = {
+                    "symbol": symbol,
+                    "timestamp": bar.date.isoformat() if hasattr(bar.date, "isoformat") else str(bar.date),
+                    "open": bar.open,
+                    "high": bar.high,
+                    "low": bar.low,
+                    "close": bar.close,
+                    "volume": bar.volume,
+                }
+                asyncio.create_task(callback(bar_data))
+
+        bars.updateEvent += on_bar_update
+        self._live_bar_subscriptions[symbol] = bars
+        logger.info("ib_live_bars_subscribed", symbol=symbol, warmup_bars=len(records))
+        return warmup_df
+
+    async def unsubscribe_live_bars(self, symbol: str) -> None:
+        if symbol in self._live_bar_subscriptions:
+            self._ib.cancelHistoricalData(self._live_bar_subscriptions[symbol])
+            del self._live_bar_subscriptions[symbol]
+            logger.info("ib_live_bars_unsubscribed", symbol=symbol)
 
     async def get_current_price(self, symbol: str) -> float:
         from ib_async import Stock

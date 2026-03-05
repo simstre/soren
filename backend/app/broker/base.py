@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
 from typing import Callable, Awaitable
 
+import pandas as pd
+
 from app.schemas.position import PositionRead
 
 
@@ -78,6 +80,23 @@ class BrokerAdapter(ABC):
     def get_starting_balance(self) -> float | None:
         """Return the balance captured at connect time, or None if unavailable."""
         return None
+
+    async def subscribe_live_bars(
+        self,
+        symbol: str,
+        callback: Callable[[dict], Awaitable[None]],
+        lookback_days: int = 2,
+    ) -> pd.DataFrame:
+        """Subscribe to streaming 1-min bars with historical warmup.
+
+        Returns warmup DataFrame. Default no-op returns empty DataFrame
+        so MockAdapter and ReplayBrokerAdapter fall back to yfinance polling.
+        """
+        return pd.DataFrame()
+
+    async def unsubscribe_live_bars(self, symbol: str) -> None:
+        """Unsubscribe from streaming 1-min bars. Default no-op."""
+        pass
 
     async def close_position(self, symbol: str) -> str | None:
         """Close a single open position by symbol. Returns order ID or None."""

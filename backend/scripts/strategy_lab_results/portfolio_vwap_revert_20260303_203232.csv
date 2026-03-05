@@ -1,0 +1,2 @@
+strategy,total_pnl,total_pnl_pct,total_trades,win_rate,max_drawdown,max_drawdown_pct,avg_hold_bars,trading_days,starting_balance,ending_balance,RIVN_pnl,RIVN_pnl_pct,RIVN_trades,RIVN_win_rate,PLTR_pnl,PLTR_pnl_pct,PLTR_trades,PLTR_win_rate,CEG_pnl,CEG_pnl_pct,CEG_trades,CEG_win_rate
+vwap_revert,4690.01,4.69,90,60.0,2962.71,2.85,59.1,69,100000.0,104690.01,-186.56,-0.19,34,52.9,4675.59,4.68,23,73.9,200.98,0.2,33,57.6

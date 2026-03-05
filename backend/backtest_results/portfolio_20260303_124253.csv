@@ -1,0 +1,2 @@
+position_size_pct,total_pnl,total_pnl_pct,monthly_pnl_pct_est,trading_days,win_rate,total_trades,winning_trades,losing_trades,max_drawdown,max_drawdown_pct,starting_balance,ending_balance,TSLA_pnl,TSLA_pnl_pct,TSLA_trades,TSLA_win_rate,CEG_pnl,CEG_pnl_pct,CEG_trades,CEG_win_rate,PLTR_pnl,PLTR_pnl_pct,PLTR_trades,PLTR_win_rate,RIVN_pnl,RIVN_pnl_pct,RIVN_trades,RIVN_win_rate
+0.5,6864.77,6.86,5.34,27,57.1,28,16,12,3514.84,3.43,100000.0,107102.37,2118.62,2.12,8,62.5,362.2,0.36,2,50.0,1716.93,1.72,3,66.7,2667.02,2.67,15,53.3

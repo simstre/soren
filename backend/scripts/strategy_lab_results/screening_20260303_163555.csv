@@ -1,0 +1,5 @@
+strategy,total_pnl,total_pnl_pct,total_trades,win_rate,max_drawdown_pct,avg_hold_bars,elapsed_s
+v9_rsi,2547.85,2.55,11,36.4,35.7,301.7,0.3
+orb,-269.06,-0.27,138,45.7,56.48,138.0,0.2
+ema_cross,-4819.92,-4.82,370,26.5,52.21,20.8,0.7
+vwap_revert,5736.39,5.74,380,65.0,55.14,83.2,0.3
