@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { Check, Zap } from "lucide-react";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/stores/appStore";
@@ -90,6 +91,11 @@ export function StrategySidebar() {
         })}
       </div>
 
+      <div className="mt-auto p-3 border-t border-zinc-800 flex-shrink-0">
+        <Link href="/privacy" className="text-[11px] text-zinc-600 hover:text-zinc-400">
+          Privacy &amp; Contact
+        </Link>
+      </div>
     </aside>
   );
 }
