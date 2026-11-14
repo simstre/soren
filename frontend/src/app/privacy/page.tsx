@@ -40,7 +40,7 @@ export default function PrivacyPage() {
           <h2 className="font-semibold">Contact</h2>
           <p className="text-zinc-400">
             Questions or requests:{" "}
-            <a href="mailto:github.com/simstre" className="text-emerald-400 hover:underline">
+            <a href="https://github.com/simstre" target="_blank" rel="noopener noreferrer" className="text-emerald-400 hover:underline">
               github.com/simstre
             </a>
           </p>
